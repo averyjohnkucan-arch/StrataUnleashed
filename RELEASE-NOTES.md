@@ -1,3 +1,14 @@
+# Strata Unleashed 0.1.38-r5
+
+- Corrected memory accounting from each pinned model's shard headers: SSD engram table, host expert/embedding memory and GPU dense/KV memory. All picker estimates use FP16/Q8 at 262,144 context; runtime capacity defaults remain unchanged.
+- Added explicit Engram table, CPU MEM and GPU MEM columns, largest CPU footprint first. Unsupported BF16/IQ1_S expert variants are hidden; 19 supported choices remain.
+- Over-budget choices are struck through in supporting terminals and remain selectable. `--allow-over-budget` overrides estimated admission checks; actual allocation errors and measured tuning reservation checks still apply.
+- Atomic Q5 CPU planning corrected from 79.3 to 53.8 GiB. Real tests with preallocated native context measured 50.0 GiB peak engine RSS at 512/512 FP16/FP16 and 50.07 GiB at 261,624/512 FP16/Q8. [Per-model chart and evidence](docs/MEMORY.md).
+- 65 regression tests passed, including stale-catalog replacement, memory placement, fixed FP16/Q8 estimates, sorted supported choices and over-budget selection.
+- The native engine is unchanged. Linux includes the validated engine with source-build fallback; Windows remains a source/build release without native Windows execution validation.
+
+## Previous revision
+
 # Strata Unleashed 0.1.38-r4
 
 - Interactive setup asks separately for extra VRAM and system RAM headroom. `--reserve-ram-mib` is available in the Windows/Linux CLI and launcher.

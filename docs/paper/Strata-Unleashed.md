@@ -2,7 +2,7 @@
 
 ## Model selection, verified downloads and per-machine inference tuning
 
-**Engineering note · release 0.1.38-r4 · 3 October 2026**
+**Engineering note · release 0.1.38-r5 · 3 October 2026**
 
 This note describes the Unleashed fork's installation and tuning workflow. It is not a peer-reviewed paper or a replacement for the original Strata paper. Engine architecture and upstream contributions remain attributed to Strata and its dependencies.
 
@@ -16,7 +16,7 @@ The app is distributed as verified release archives. Linux includes an Ada engin
 
 ### 2. Catalog and download integrity
 
-The bundled catalog contains 22 complete model variants across ISTA general, ISTA Coder, Atomic Chat, HuiHui and Unsloth. It pins each publisher's immutable revision and records every shard's size and SHA256. The initial catalog inspection read 170 shard headers. Complete-file hashes are checked when weights are downloaded; inspecting a header alone is not a substitute for that verification.
+The bundled catalog audits 22 complete model variants and offers the 19 supported variants in the picker across ISTA general, ISTA Coder, Atomic Chat, HuiHui and Unsloth. It pins each publisher's immutable revision and records every shard's size and SHA256. The initial catalog inspection read 170 shard headers. Complete-file hashes are checked when weights are downloaded; inspecting a header alone is not a substitute for that verification.
 
 The catalog groups files by shard family and rejects incomplete sets. It excludes MTP heads, vision projectors and imatrix files from the list of standalone language models. Compatibility is based on actual tensor types and layouts, not the quant label in a filename. For example, a mixed model labeled Q2_K may contain supported expert types even though the engine does not generally implement Q2_K experts.
 
@@ -30,9 +30,9 @@ Recommendation preferences follow the requested product behavior: ISTA for compa
 
 The scanner reads the operating system, CPU, installed and available RAM, free disk, NVIDIA device/driver information, current free VRAM, build tools and engine compatibility. A model that exceeds an estimate receives a specific reason, such as insufficient currently available RAM or a missing compiler. Users can change KV precision or reserved VRAM and compare the results.
 
-The current resident-expert RAM estimate is expert bytes plus twice dense-weight bytes plus 6 GiB overhead. Context beyond 16,384 tokens adds 64 KiB per extra token. Disk estimates include remaining downloads, converted pack bytes and 2 GiB working headroom. The PLE table is mapped from disk rather than treated as a permanently resident RAM allocation.
+CPU planning uses host expert bytes plus host token embedding plus a 6 GiB runtime allowance. PLE/engram tables are SSD-backed; dense GPU weights are counted once, on the GPU. The GPU expert cache retains host copies in the default arena mode. The table uses FP16/Q8 at 262,144 context: 4.59375 GiB main KV, GPU dense bytes and 2 GiB workspace before expert caching. Full per-model derivations and source evidence are in docs/MEMORY.md.
 
-The advisory startup VRAM estimate includes dense weights, a cache allowance for the selected precision across 12 full-attention layers with two KV heads and 256 values per head, and 2 GiB workspace. These estimates can reject marginal setups that manual configuration or another engine might run. They do not prove a universal lower bound.
+Supported choices are sorted by descending CPU footprint. Over-budget rows are struck through in supporting terminals and remain selectable; selecting them overrides estimated admission checks but not measured tuning reservations. Unsupported encodings are hidden. Atomic Q5 now budgets 53.797 GiB CPU memory instead of 79.3 GiB. A short 512/512 run with FP16/FP16 KV measured 50.00 GiB peak engine RSS. A 261,624/512 run with FP16/Q8 measured 50.07 GiB. Both preallocated the full 262,144-token context before expert-cache sizing. These single Linux samples support the planning allowance but do not establish minimum installed RAM on all systems. See docs/UNLEASHED-MEMORY-VALIDATION.json.
 
 Drive identification is performed on the volume actually containing the app or selected model. Linux follows the mounted block device to its parent transport; Windows queries the partition's disk bus. NVMe is reported only when identified as such. SATA, USB, rotational and unknown storage receive an experience-may-vary notice.
 
@@ -44,7 +44,7 @@ The measured memory limit is total device memory minus the user's additional res
 
 The KV default is FP16/FP16 for nominal 16 GiB or larger cards, FP16/Q8 for 12–16 GiB, Q8/Q8 for 8–12 GiB, and Q8/Q6 below 8 GiB. Driver-reported capacity may be up to 64 MiB below a nominal tier. Users may explicitly override this with --kv; the tuner does not change cache precision automatically.
 
-System RAM headroom is selected separately in the interactive setup or through --reserve-ram-mib. It reduces the model-fit budget, is rechecked against current available RAM before launch, and enters the tuning fingerprint. Trials whose sampled available RAM falls below the reserve are rejected. This is admission control and measured headroom, not an OS memory lock or a hard cap on later inference.
+System RAM headroom is selected separately in the interactive setup or through --reserve-ram-mib. It reduces the model-fit budget, is rechecked against current available RAM before launch unless the estimate is explicitly overridden, and enters the tuning fingerprint. Trials whose sampled available RAM falls below the reserve are rejected. This is admission control and measured headroom, not an OS memory lock or a hard cap on later inference.
 
 The first objective is generation throughput on two 512-input/512-output workloads. The search fixes K/V precision to the GPU-capacity default (or an explicit override), and considers optional MTP settings, CPU workers, uncached-expert PCIe share and other existing runtime controls. Fresh incumbent controls and repeated comparisons reduce the risk that temperature, clocks or link-state changes make an old measurement dominate subsequent choices.
 

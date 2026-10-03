@@ -131,7 +131,8 @@ class Tuner:
 
         from unleashed import check_ram_headroom
 
-        check_ram_headroom(cfg["args"], reserve_ram_mib)
+        if not cfg.get("unleashed_tuning", {}).get("allow_over_budget", False):
+            check_ram_headroom(cfg["args"], reserve_ram_mib)
 
         native = cfg["args"][cfg["args"].index("--native") + 1]
         metadata = GGUFFile(native).metadata

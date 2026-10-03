@@ -111,7 +111,7 @@ def show_scan(s):
 
 
 def rows_for(entries, system, a):
-    return [
+    rows = [
         {
             "model": e,
             "assessment": assess(
@@ -121,33 +121,60 @@ def rows_for(entries, system, a):
                 a.reserve_vram_mib,
                 a.context,
                 download_bytes=0 if e["provider"] == "local" else None,
-                kv=getattr(a, "kv", None),
+                kv="FP16/Q8",
                 reserve_ram_mib=getattr(a, "reserve_ram_mib", 0),
             ),
         }
         for e in entries
     ]
 
+    return sorted(
+        rows,
+        key=lambda row: (-row["assessment"]["ram_estimate_bytes"], row["model"]["id"]),
+    )
+
 
 def show_models(rows, intent):
     recs = recommendations(rows, intent)
     best = recs[0]["model"]["id"] if recs else None
+    print("\nMemory estimates: GiB; FP16/Q8 KV; 262144-token context.")
     print(
-        "\n #  Provider / quant                              Download   RAM est.  Status"
+        f" #  {'Provider / quant':43} {'Download':>9} {'Engram table':>13} {'CPU MEM':>10} {'GPU MEM*':>10}  Status"
     )
     for n, row in enumerate(rows, 1):
         e, fit = row["model"], row["assessment"]
-        label = e["id"]
+        over = bool(fit.get("resource_reasons"))
         status = (
-            "Recommended"
-            if label == best
-            else ("Fits estimate" if fit["status"] == "candidate" else "Not available")
+            "Over budget; selectable"
+            if over
+            else (
+                "Setup needed"
+                if fit.get("blocking_reasons")
+                else "Recommended" if e["id"] == best else "Fits estimate"
+            )
         )
-        print(
-            f'{n:2}  {label:46} {e["download_bytes"]/GIB:6.1f} GiB {fit["ram_estimate_bytes"]/GIB:6.1f} GiB  {status}'
+        line = (
+            f'{n:2}  {e["id"]:43} {e["download_bytes"]/GIB:9.1f}'
+            f' {e["inspection"]["ple_bytes"]/GIB:13.1f}'
+            f' {fit["ram_estimate_bytes"]/GIB:10.1f} {fit["vram_estimate_bytes"]/GIB:10.1f}  {status}'
         )
+        # SGR 9 is supported by modern Linux terminals and Windows Terminal.
+        # Keep redirected output plain and retain a textual over-budget label.
+        print("\x1b[9m" + line + "\x1b[0m" if over and sys.stdout.isatty() else line)
         for reason in fit["reasons"]:
             print(f"      {reason}")
+    print(
+        "Engram table: SSD-backed PLE data. CPU MEM: full host experts + embedding + 6 GiB runtime allowance."
+    )
+    print(
+        "*GPU MEM: GPU dense weights + FP16/Q8 KV + 2 GiB workspace, before the automatic expert cache."
+    )
+    print(
+        "The GPU cache uses spare VRAM; in this mode its host expert copies remain in RAM."
+    )
+    print(
+        "Planning estimates vary by workload. Over-budget rows remain selectable. Run KV uses the card-capacity default or your --kv override."
+    )
     if intent == "uncensored" and not recs:
         print(
             "No HuiHui option fits right now. Other providers are not substituted as uncensored."
@@ -181,6 +208,7 @@ def launch_command(path, a):
     ]
     for flag, enabled in (
         ("--retune", a.retune),
+        ("--allow-over-budget", getattr(a, "allow_over_budget", False)),
         ("--tune-only", a.tune_only),
         ("--build", a.build),
         ("--chat", a.chat),
@@ -258,6 +286,11 @@ def main(argv=None):
         help="Open terminal test chat with no system prompt",
     )
     ap.add_argument("--retune", action="store_true")
+    ap.add_argument(
+        "--allow-over-budget",
+        action="store_true",
+        help="Attempt a supported model despite resource estimates",
+    )
     ap.add_argument("--tune-only", action="store_true")
     ap.add_argument("--download-only", action="store_true")
     ap.add_argument(
@@ -303,7 +336,17 @@ def main(argv=None):
                 encoding="utf-8"
             )
         )
-    entries = catalog["models"]
+    # Old cached catalogs must not restore obsolete memory estimates.
+    if any(
+        e["inspection"].get("memory_accounting_version") != 2 for e in catalog["models"]
+    ):
+        catalog = json.loads(CATALOG.read_text(encoding="utf-8"))
+    if a.model_id:
+        requested = next((e for e in catalog["models"] if e["id"] == a.model_id), None)
+        if requested and not requested["inspection"]["compatible"]:
+            print("This model is unsupported and is not offered by the picker.")
+            return 2
+    entries = [e for e in catalog["models"] if e["inspection"]["compatible"]]
     if a.local_model:
         entries = [local_entry(a.local_model)]
         system["storage"] = scan_storage(a.local_model.parent, a.local_model)
@@ -370,12 +413,20 @@ def main(argv=None):
             return 0
         selected = rows[n - 1]
     e, fit = selected["model"], selected["assessment"]
-    if fit["reasons"]:
-        print("\nCannot run this selection now:\n  " + "\n  ".join(fit["reasons"]))
+    if fit.get("blocking_reasons"):
+        print(
+            "\nCannot run this selection now:\n  "
+            + "\n  ".join(fit["blocking_reasons"])
+        )
         print(
             "Choose a smaller compatible model, close other apps, reduce reservation, or add RAM/disk as indicated."
         )
         return 2
+    if fit.get("resource_reasons"):
+        a.allow_over_budget = True
+        print(
+            "Selected despite the estimate. Setup will attempt it; actual allocation failures and reserved-memory limits still apply."
+        )
     a.build = a.build or fit["needs_build"]
     if a.build and any(not p for p in system["tools"].values()) and not a.download_only:
         print("Install the missing source-build tools before tuning with --build.")
@@ -383,7 +434,7 @@ def main(argv=None):
     for warning in fit["warnings"]:
         print(warning)
     print(
-        f'\nSelected: {e["id"]}; reserve VRAM {a.reserve_vram_mib} MiB / system RAM {a.reserve_ram_mib} MiB; context {a.context}; KV {fit.get("kv", a.kv or "auto")}; GPU {a.gpu}'
+        f'\nSelected: {e["id"]}; reserve VRAM {a.reserve_vram_mib} MiB / system RAM {a.reserve_ram_mib} MiB; context {a.context}; KV {a.kv or default_kv(next(g["total_mib"] for g in system["gpus"] if g["index"] == a.gpu))}; GPU {a.gpu}'
     )
     if not interactive:
         print(KV_GUIDANCE)
@@ -443,6 +494,7 @@ def main(argv=None):
         "context": a.context,
         "gpu": a.gpu,
         "assessment": fit,
+        "allow_over_budget": a.allow_over_budget,
         "launch": launch_command(path, a),
     }
     (ROOT / "work/last-selection.json").write_text(json.dumps(receipt, indent=2) + "\n")

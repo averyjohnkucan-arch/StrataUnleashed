@@ -14,7 +14,13 @@ from tools.unleashed_catalog import ROOT
 from tools.unleashed_download import remaining_download
 from tools.unleashed_storage import scan_storage
 
-from tools.unleashed_policy import NATIVE_CONTEXT, default_kv, ram_estimate
+from tools.unleashed_policy import (
+    NATIVE_CONTEXT,
+    default_kv,
+    ram_estimate,
+    ram_breakdown,
+    kv_cache_bytes,
+)
 
 GIB = 1024**3
 MIB = 1024**2
@@ -138,6 +144,7 @@ def assess(
     ins = entry["inspection"]
     blocked = list(ins["reasons"])
     warnings = []
+    resource_reasons = []
     if system["os"] not in ("Linux", "Windows") or system["machine"].lower() not in (
         "amd64",
         "x86_64",
@@ -155,7 +162,7 @@ def assess(
             "GPU compute capability must be at least 7.5 (RTX 20 series or newer)"
         )
     # The PLE table is mapped from disk, not counted as a permanently resident RAM allocation.
-    # Include expert arena, two dense copies, OS/loader overhead, and modest context growth.
+    # Keep the full host expert arena and embedding; KV and dense tensors use VRAM.
     ram_need = ram_estimate(ins, context)
     disk_need = (
         (remaining_download(entry) if download_bytes is None else download_bytes)
@@ -165,20 +172,19 @@ def assess(
     # The supported architecture has 12 full-attention layers, two KV heads,
     # and 256 values per head. Other layers use recurrent state.
     pair = kv or default_kv(gpu["total_mib"]) if gpu else (kv or "FP16/FP16")
-    bits = [16 if part == "FP16" else int(part[1:]) for part in pair.split("/")]
-    row_bytes = sum(512 if b == 16 else 8 * (2 + 4 * b) for b in bits)
-    vram_need = ins["dense_bytes"] + context * 12 * 2 * row_bytes + 2 * GIB
+    kv_bytes = kv_cache_bytes(context, pair)
+    vram_need = ins["gpu_dense_bytes"] + kv_bytes + 2 * GIB
     ram_budget = max(0, system["ram_available"] - reserve_ram_mib * MIB)
     if ram_need > system["ram_total"]:
-        blocked.append(
+        resource_reasons.append(
             f'Estimated resident RAM need {ram_need / GIB:.1f} GiB exceeds installed {system["ram_total"] / GIB:.1f} GiB'
         )
     elif ram_need > ram_budget:
-        blocked.append(
+        resource_reasons.append(
             f"Estimated RAM need {ram_need / GIB:.1f} GiB exceeds {ram_budget / GIB:.1f} GiB currently available after reserving {reserve_ram_mib / 1024:.1f} GiB for other apps; close other apps or choose a smaller model"
         )
     if disk_need > system["disk_free"]:
-        blocked.append(
+        resource_reasons.append(
             f'Need about {disk_need / GIB:.1f} GiB more disk space; {system["disk_free"] / GIB:.1f} GiB free'
         )
     budget = 0
@@ -186,7 +192,7 @@ def assess(
         safety = max(512, int(gpu["total_mib"] * 0.02 + 0.999))
         budget = (gpu["free_mib"] - reserve_mib - safety) * MIB
         if budget < vram_need:
-            blocked.append(
+            resource_reasons.append(
                 f"Estimated startup VRAM {vram_need / GIB:.1f} GiB exceeds {max(0,budget) / GIB:.1f} GiB available after reservation/headroom"
             )
     needs_build = not system.get("engine_runs", False)
@@ -213,13 +219,20 @@ def assess(
                 "The engine will be built locally for this machine before tuning"
             )
     warnings.append(
-        "RAM/VRAM are conservative estimates; measured tuning decides the actual fit and speed"
+        "RAM/VRAM estimates include working-memory allowances; measured tuning checks fit and speed"
     )
     return {
-        "status": "cannot-run-now" if blocked else "candidate",
-        "reasons": blocked,
+        "status": "cannot-run-now" if blocked or resource_reasons else "candidate",
+        "reasons": blocked + resource_reasons,
+        "blocking_reasons": blocked,
+        "resource_reasons": resource_reasons,
         "warnings": warnings,
         "ram_estimate_bytes": ram_need,
+        "memory_breakdown": dict(
+            ram_breakdown(ins, context),
+            gpu_kv_bytes=kv_bytes,
+            gpu_workspace_allowance_bytes=2 * GIB,
+        ),
         "ram_budget_bytes": ram_budget,
         "reserve_ram_mib": reserve_ram_mib,
         "additional_disk_bytes": disk_need,

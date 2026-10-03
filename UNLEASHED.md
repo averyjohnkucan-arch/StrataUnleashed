@@ -127,3 +127,7 @@ For direct engine use, omitting `--mtp` serves without a draft head; `--no-mtp` 
 `--reserve-ram-mib N` reserves additional available system RAM in the model-fit estimate and tuning acceptance checks. Interactive setup asks for it alongside the existing VRAM reserve. The launcher rechecks current RAM before preparation and cached-profile reuse. Both reservations enter the cache fingerprint and selection receipt. This does not lock RAM or impose an operating-system cap during later inference.
 
 KV guidance shown in setup: **FP16/FP16 is ideal; FP16/Q8 is recommended; Q8/Q5 is a last resort only when no other viable option fits.** Card-capacity defaults remain unchanged.
+
+## Model memory estimates
+
+The picker uses FP16/Q8 KV at 262,144 context for a consistent comparison, independently of actual runtime KV defaults. It separates SSD engram tables, CPU memory and GPU memory, and sorts by descending CPU footprint. Unsupported encodings are hidden; over-budget choices remain selectable. `--allow-over-budget` bypasses the launcher RAM estimate check without bypassing measured tuning reservations. See [per-model accounting and measurements](docs/MEMORY.md).

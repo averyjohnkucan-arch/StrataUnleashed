@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import concurrent.futures
 import datetime
-import hashlib
 import io
 import json
 import re
@@ -176,6 +175,7 @@ def inspect_headers(headers, sizes):
         reasons.append("Invalid experts used per token")
     tensors, expert_types, ple_types = {}, set(), set()
     expert_bytes = ple_bytes = dense_bytes = pack_bytes = 0
+    host_embedding_bytes = gpu_dense_bytes = raw_dense_bytes = 0
     for g, size in zip(headers, sizes):
         for t in g.tensors:
             if t.name in tensors:
@@ -220,6 +220,11 @@ def inspect_headers(headers, sizes):
                     else t.elements * (4 if (form or t.type_name) == "F32" else 2)
                 )
                 dense_bytes += stored
+                raw_dense_bytes += nb
+                if t.name == "token_embd.weight":
+                    host_embedding_bytes += nb
+                else:
+                    gpu_dense_bytes += stored
                 if not native:
                     pack_bytes += stored + 64
     for layer in range(48):
@@ -238,6 +243,10 @@ def inspect_headers(headers, sizes):
     return {
         "compatible": not reasons,
         "reasons": sorted(set(reasons)),
+        "memory_accounting_version": 2,
+        "host_embedding_bytes": host_embedding_bytes,
+        "gpu_dense_bytes": gpu_dense_bytes,
+        "raw_dense_bytes": raw_dense_bytes,
         "expert_bytes": expert_bytes,
         "ple_bytes": ple_bytes,
         "dense_bytes": dense_bytes,

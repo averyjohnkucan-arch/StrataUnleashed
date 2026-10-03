@@ -26,8 +26,8 @@ The Linux release includes the previously tested Ada/sm89 binary. It requires gl
 
 1. Scan OS, CPU, installed/available RAM, free disk, NVIDIA GPU(s), free VRAM, compute capability, driver, engine and build tools.
 2. Choose compact/general, coding, larger model, or uncensored use. Select a GPU when several are present.
-3. Set extra VRAM to keep free for other applications and context length. Automatic safety headroom is separate.
-4. Compare all model/quant choices. Each shows download size, estimated RAM and either candidate/recommended status or specific reasons it cannot run now.
+3. Set extra VRAM and system RAM to keep free for other applications; context remains 262,144. Automatic safety headroom is separate.
+4. Compare supported model/quant choices, largest CPU footprint first. Each shows download size, SSD engram table, CPU MEM and GPU MEM at FP16/Q8 KV. Over-budget rows remain selectable.
 5. Choose download/setup/chat (the default), download/setup/API, setup only, or download only. API mode prompts for an available local port. Nothing downloads until you select an action.
 6. Download every shard from a pinned Hugging Face revision, resume partial files, verify published SHA256 hashes, and check actual headers before packing.
 7. Run the procedural tuner: fit the VRAM budget, optimize 512-input/512-output decode, then prefill while retaining at least 90% of the measured decode reference. Save the result for later reuse.
@@ -47,18 +47,18 @@ The bundled catalog was checked against the publishers on **2026-10-03** and inc
 | [ISTA Flash Next Coder](https://huggingface.co/ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-Coder-GGUF) | IQ1_M (expert-pruned Coder release) | Smallest option; coding focused |
 | [ISTA Flash Next](https://huggingface.co/ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF) | Q2_0, IQ2_XS, IQ3_XXS, IQ3_S | Small general models |
 | [Atomic Chat](https://huggingface.co/AtomicChat/Qwen3.8-Flash-Next-GGUF) | AD-3.84bpw-IQ4_XS-M64, AD-4.27bpw-Q4_K_M-M64, AD-5.00bpw-Q5_K_M-M64 | Main pick for larger models |
-| [Unsloth](https://huggingface.co/unsloth/Qwen3.8-Flash-Next-GGUF) | BF16, Q8_0, UD-IQ1_M, UD-IQ1_S, UD-IQ3_XXS, UD-IQ4_XS, UD-Q2_K_XL, UD-Q3_K_XL, UD-Q4_K_XL, UD-Q5_K_XL, UD-Q6_K_XL | Larger quants available; optional, not the first recommendation |
-| [HuiHui](https://huggingface.co/huihui-ai/Huihui-Qwen3.8-Flash-Next-abliterated-GGUF) | BF16, Q8_0, UD-Q4_K_XL | Uncensored / abliterated |
+| [Unsloth](https://huggingface.co/unsloth/Qwen3.8-Flash-Next-GGUF) | Q8_0, UD-IQ1_M, UD-IQ3_XXS, UD-IQ4_XS, UD-Q2_K_XL, UD-Q3_K_XL, UD-Q4_K_XL, UD-Q5_K_XL, UD-Q6_K_XL | Larger quants available; optional, not the first recommendation |
+| [HuiHui](https://huggingface.co/huihui-ai/Huihui-Qwen3.8-Flash-Next-abliterated-GGUF) | Q8_0, UD-Q4_K_XL | Uncensored / abliterated |
 
 “Up to 3-bit” includes ISTA's published IQ3_S family (approximately 3.5-bit in upstream's description), and the Coder's IQ1_M filename is not a claim that every tensor is one-bit. Mixed quantizations are checked by their actual tensor types, not filenames. Atomic currently publishes three Flash Next variants; imatrix, vision-projector and MTP artifacts are not presented as independent language models. This catalog covers **Flash Next**, not unrelated 27B or 2.4T architectures.
 
-The BF16 expert models from HuiHui and Unsloth, and Unsloth UD-IQ1_S, are shown but blocked because this engine does not implement their expert encodings. Other variants passed header/layout checks; this is **not a claim of inference or quality validation for all 19 compatible variants**. The recorded full-model throughput validation remains the Atomic Q5 run.
+The BF16 expert models from HuiHui and Unsloth, and Unsloth UD-IQ1_S, are hidden because this engine does not implement their expert encodings. Other variants passed header/layout checks; this is **not a claim of inference or quality validation for all 19 compatible variants**. The recorded full-model throughput validation remains the Atomic Q5 run.
 
 The uncensored recommendation never silently substitutes a different provider. If no HuiHui candidate fits, it says so. Publisher preferences are user-requested defaults, not a measured quality ranking. A larger file is not automatically smarter or faster.
 
 ## RAM and VRAM reservations
 
-Interactive setup asks separately for extra VRAM and system RAM to leave available, in MiB. The equivalent flags are `--reserve-vram-mib 2048 --reserve-ram-mib 8192`. Both default to zero additional reservation. RAM estimates are compared against currently available RAM minus the requested reserve. The launcher rechecks this before preparation and cached-profile reuse; the tuner samples available system RAM and rejects trials below the reserve. Both reservations are recorded and change the tuning-cache identity. This is admission control and measured headroom, not an OS-enforced limit during subsequent API/chat sessions.
+Interactive setup asks separately for extra VRAM and system RAM to leave available, in MiB. The equivalent flags are `--reserve-vram-mib 2048 --reserve-ram-mib 8192`. Both default to zero additional reservation. RAM estimates are compared against currently available RAM minus the requested reserve. Unless the user selects an over-budget model or passes `--allow-over-budget`, the launcher rechecks this before preparation and cached-profile reuse; the tuner samples available system RAM and rejects trials below the reserve. Both reservations are recorded and change the tuning-cache identity. This is admission control and measured headroom, not an OS-enforced limit during subsequent API/chat sessions.
 
 ## KV defaults and native context
 
@@ -72,11 +72,11 @@ Every trial and terminal inference test allocates 262,144 tokens. The long workl
 
 The wizard estimates this tuner's **resident-expert mode**, not upstream's separate SSD-streaming low-RAM configurations. It budgets:
 
-- RAM: expert tensor bytes + twice the resident dense-weight bytes + 6 GiB overhead; above 16,384 context tokens, an additional 64 KiB per token.
+- CPU MEM: host expert bytes + host token embedding + 6 GiB runtime allowance. PLE/engram bytes stay SSD-backed; main KV stays on GPU. GPU expert caches retain their host copies.
 - Disk: remaining model download bytes + converted pack bytes + 2 GiB working headroom. Existing complete or partial download sizes reduce the estimate; every complete file is still hashed before reuse.
-- VRAM: resident dense bytes + the selected KV format across 12 full-attention layers, two KV heads and 256 values per head + 2 GiB workspace. Available allocation space is current free VRAM minus the user reserve and automatic `max(512 MiB, 2% total VRAM)` headroom.
+- GPU MEM: GPU dense bytes + 4.59375 GiB FP16/Q8 KV at 262,144 context + 2 GiB workspace, before the adaptive expert cache. Available allocation space is current free VRAM minus the user reserve and automatic `max(512 MiB, 2% total VRAM)` headroom.
 
-These conservative estimates can reject a marginal configuration that hand tuning or SSD streaming could run. “Cannot run now” means unsupported by this workflow or outside its estimated resources; it is not a mathematical proof that no other engine/configuration could run it. Close other apps, lower the extra reservation or choose a smaller model and scan again. Actual measured tuning is the final fit check. It may still encounter and recover from allocation failures; no scan can guarantee that another application will not consume memory later.
+Over-budget estimates remain selectable; terminals supporting SGR 9 strike them through. The explicit selection overrides the launcher estimate check. Actual allocation failures and measured RAM/VRAM reservation checks still apply. Unsupported model encodings are omitted. See [the complete per-model memory chart and Q5 measurements](MEMORY.md).
 
 No throughput or quality is invented for an untested model. Tuning and inference use native 262,144-token context. Long prefill validation uses 261,624 input tokens plus 512 generated tokens. The tuner never falls back to a shorter context. MTP is optional; `--mtp` accepts an already prepared runtime folder and the CLI does not automatically download or convert a draft head.
 
@@ -116,6 +116,7 @@ Use the same arguments after `CLI-UNLEASHED.bat` on Windows.
 | `--model-id ID` | Exact ID from `--list` |
 | `--local-model PATH` | Existing complete shard family; any shard can identify it |
 | `--gpu N` | Physical NVIDIA GPU index, default 0; one GPU at a time |
+| `--allow-over-budget` | Attempt a model despite the RAM estimate; measured tuning reservations still apply |
 | `--reserve-ram-mib N` | Extra available system RAM to retain, in MiB; default 0 |
 | `--reserve-vram-mib N` | Extra VRAM for other applications, default 0 |
 | `--context N` | Native 262,144 tokens; this is the only accepted tuning capacity |

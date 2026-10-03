@@ -75,10 +75,17 @@ class PolicyTests(unittest.TestCase):
             model.touch()
             with patch("tools.gguf_reader.GGUFFile"), patch(
                 "tools.unleashed_catalog.inspect_headers",
-                return_value={"expert_bytes": 20 * 1024**3, "dense_bytes": 0},
+                return_value={
+                    "expert_bytes": 20 * 1024**3,
+                    "dense_bytes": 0,
+                    "memory_accounting_version": 2,
+                    "host_embedding_bytes": 0,
+                    "gpu_dense_bytes": 0,
+                    "ple_bytes": 0,
+                },
             ), patch(
                 "psutil.virtual_memory",
-                return_value=SimpleNamespace(available=48 * 1024**3),
+                return_value=SimpleNamespace(available=30 * 1024**3),
             ):
                 unleashed.check_ram_headroom(["--native", str(model)], 1024)
                 with self.assertRaisesRegex(RuntimeError, "reserved"):

@@ -278,7 +278,78 @@ class WizardTests(unittest.TestCase):
         ) as download, redirect_stdout(io.StringIO()) as out:
             self.assertEqual(W.main(["--list", "--json", "--offline"]), 0)
             download.assert_not_called()
-            self.assertEqual(len(json.loads(out.getvalue())["models"]), 22)
+            self.assertEqual(len(json.loads(out.getvalue())["models"]), 19)
+
+    def test_old_cached_estimates_are_replaced(self):
+        legacy = copy.deepcopy(self.catalog)
+        for entry in legacy["models"]:
+            entry["inspection"].pop("memory_accounting_version", None)
+        read_text = Path.read_text
+        exists = Path.exists
+        cached = W.ROOT / "work/model-catalog.json"
+
+        def read(path, *args, **kwargs):
+            return (
+                json.dumps(legacy)
+                if path == cached
+                else read_text(path, *args, **kwargs)
+            )
+
+        with patch.object(W, "scan_system", return_value=hardware()), patch.object(
+            Path, "exists", lambda path: path == cached or exists(path)
+        ), patch.object(Path, "read_text", read), redirect_stdout(io.StringIO()) as out:
+            self.assertEqual(W.main(["--list", "--json"]), 0)
+        self.assertTrue(
+            all(
+                row["model"]["inspection"]["memory_accounting_version"] == 2
+                for row in json.loads(out.getvalue())["models"]
+            )
+        )
+
+    def test_memory_placement_and_reference_kv(self):
+        from tools.unleashed_policy import ram_estimate, kv_cache_bytes
+
+        model = self.model()
+        original = ram_estimate(model["inspection"])
+        model["inspection"]["ple_bytes"] *= 2
+        self.assertEqual(ram_estimate(model["inspection"], 16384), original)
+        self.assertAlmostEqual(original / GIB, 53.797, places=3)
+        for pair, expected in [
+            ("FP16/Q8", 4.59375),
+            ("FP16/FP16", 6),
+            ("Q8/Q8", 3.09375),
+        ]:
+            self.assertEqual(kv_cache_bytes(262144, pair) / GIB, expected)
+
+    def test_picker_sorted_supported_and_fixed_reference(self):
+        with patch.object(W, "scan_system", return_value=hardware()), redirect_stdout(
+            io.StringIO()
+        ) as out:
+            self.assertEqual(
+                W.main(["--list", "--offline", "--json", "--kv", "Q4/Q4"]), 0
+            )
+        rows = json.loads(out.getvalue())["models"]
+        sizes = [row["assessment"]["ram_estimate_bytes"] for row in rows]
+        self.assertEqual(sizes, sorted(sizes, reverse=True))
+        self.assertTrue(all(row["model"]["inspection"]["compatible"] for row in rows))
+        self.assertTrue(
+            all(
+                row["assessment"]["memory_breakdown"]["gpu_kv_bytes"] == 4.59375 * GIB
+                for row in rows
+            )
+        )
+        system = hardware()
+        system["ram_available"] = GIB
+        row = {"model": self.model(), "assessment": self.fit(s=system)}
+        out = io.StringIO()
+        with redirect_stdout(out), patch.object(out, "isatty", return_value=True):
+            W.show_models([row], "large")
+        self.assertIn("\x1b[9m", out.getvalue())
+        for label in ("Engram table", "CPU MEM", "GPU MEM", "Over budget; selectable"):
+            self.assertIn(label, out.getvalue())
+        with redirect_stdout(io.StringIO()) as plain:
+            W.show_models([row], "large")
+        self.assertNotIn("\x1b", plain.getvalue())
 
     def test_blocked_selection_never_downloads(self):
         with patch.object(W, "scan_system", return_value=hardware()), patch.object(
@@ -288,7 +359,9 @@ class WizardTests(unittest.TestCase):
             download.assert_not_called()
 
     def test_cli_passes_gpu_reserve_and_tuning_controls(self):
-        with patch.object(W, "scan_system", return_value=hardware()), patch.object(
+        system = hardware()
+        system["ram_available"] = GIB
+        with patch.object(W, "scan_system", return_value=system), patch.object(
             W, "download_model", return_value=Path("/readonly/model.gguf")
         ), patch.object(
             W.subprocess, "run", return_value=subprocess.CompletedProcess([], 0)
@@ -325,6 +398,7 @@ class WizardTests(unittest.TestCase):
             self.assertEqual(cmd[cmd.index("--reserve-vram-mib") + 1], "2048")
             self.assertEqual(cmd[cmd.index("--gpu") + 1], "0")
             self.assertEqual(cmd[cmd.index("--reserve-ram-mib") + 1], "8192")
+            self.assertIn("--allow-over-budget", cmd)
             self.assertIn("--retune", cmd)
             self.assertIn("--tune-only", cmd)
 

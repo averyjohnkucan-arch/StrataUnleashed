@@ -1,0 +1,100 @@
+{
+  "release": "0.1.38-r5",
+  "date": "2026-10-03",
+  "model": "atomic/AD-5.00bpw-Q5_K_M-M64",
+  "linux_engine_sha256": "c1cd774cfa177def1354140c632cc5cc1e589c116c4a7ec764a241c28e56338c",
+  "context_tokens": 262144,
+  "context_preallocated": true,
+  "preallocation_evidence": "src/program/generate.cpp: cudaMalloc(session_bytes(g, o.max_context, ...)) before expert-cache sizing",
+  "sampling_interval_seconds": 0.25,
+  "cpu_planning_gib": 53.79701232910156,
+  "working_memory_allowance_gib": 6,
+  "measurements": [
+    {
+      "kv": "FP16/FP16",
+      "prompt_tokens": 512,
+      "output_tokens": 512,
+      "peak_engine_memory_bytes": {
+        "VmRSS": 53685358592,
+        "VmHWM": 53685358592,
+        "RssAnon": 52113211392,
+        "RssFile": 804900864,
+        "RssShmem": 767246336,
+        "VmLck": 0,
+        "VmPin": 0
+      },
+      "result": {
+        "ram_valid": true,
+        "minimum_available_ram_mib": 69832.8203125,
+        "reserve_ram_mib": 0,
+        "state": {
+          "kv": "FP16/FP16",
+          "workers": 23,
+          "prefill": 8192,
+          "reserve": 700,
+          "pcie": 0.1,
+          "minp": 0.7,
+          "spec": 0
+        },
+        "decode": 31.68081578100636,
+        "prefill": 209.46056730611576,
+        "peak": 15556.0,
+        "valid": true
+      }
+    },
+    {
+      "kv": "FP16/Q8",
+      "prompt_tokens": 261624,
+      "output_tokens": 512,
+      "peak_engine_memory_bytes": {
+        "VmRSS": 53763944448,
+        "VmHWM": 53763944448,
+        "RssAnon": 52123791360,
+        "RssFile": 830963712,
+        "RssShmem": 809189376,
+        "VmLck": 0,
+        "VmPin": 0
+      },
+      "result": {
+        "ram_valid": true,
+        "minimum_available_ram_mib": 68671.88671875,
+        "reserve_ram_mib": 0,
+        "state": {
+          "kv": "FP16/Q8",
+          "workers": 23,
+          "prefill": 8192,
+          "reserve": 700,
+          "pcie": 0.1,
+          "minp": 0.7,
+          "spec": 0
+        },
+        "decode": 28.14346571389309,
+        "prefill": 829.6284504562556,
+        "peak": 15552.0,
+        "valid": true
+      }
+    }
+  ],
+  "limitations": [
+    "Single Linux machine and workload per KV pair; no minimum-installed-RAM claim.",
+    "Other model entries are header-derived estimates, not inference measurements.",
+    "RSS excludes some OS/driver memory; allowances and separate available-RAM checks remain necessary.",
+    "Windows native execution was not validated."
+  ],
+  "additional_local_header_checks": [
+    {
+      "model": "ista/IQ3_S",
+      "shards": 2,
+      "header_memory_accounting_matches_catalog": true,
+      "cpu_planning_gib": 53.15290069580078,
+      "inference_tested_this_release": false
+    },
+    {
+      "model": "atomic/AD-3.84bpw-IQ4_XS-M64",
+      "shards": 28,
+      "header_memory_accounting_matches_catalog": true,
+      "cpu_planning_gib": 44.86146545410156,
+      "inference_tested_this_release": false
+    }
+  ]
+}

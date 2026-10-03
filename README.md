@@ -38,7 +38,7 @@ Prefer to download a ZIP or tar file yourself? [Get the latest release](https://
 | Unsloth | Larger quants if you want them. Not the first recommendation; don't expect a big jump just from a larger quant. |
 | HuiHui | For uncensored chat. Abliterated models. |
 
-There are **22 model/quant options**. Setup shows what fits and what it can't run. Three options are listed but currently unsupported. [Model list](docs/MODELS.md).
+There are **19 supported model/quant options**. Setup shows download size, SSD engram table, CPU memory and GPU memory, largest RAM footprint first. Over-budget choices remain selectable; unsupported encodings are hidden. All estimates use FP16/Q8 KV at 262,144 context. [Model list](docs/MODELS.md) · [Memory breakdown and measurements](docs/MEMORY.md).
 
 Setup checks your drive and read speed too. **NVMe is recommended.** Other drives get an “experience may vary” warning. Slow storage can mean slower loading and inference.
 
@@ -82,7 +82,7 @@ Setup asks how much extra **VRAM and system RAM** to leave available for other a
 ./cli-unleashed.sh --reserve-vram-mib 2048 --reserve-ram-mib 8192
 ```
 
-This requests 2 GiB of extra VRAM headroom and 8 GiB of available system RAM. RAM reservation reduces the model-selection budget, is rechecked before launch, and rejects tuning trials that dip below it. It is a headroom target, not an operating-system memory lock; other applications can still consume memory. VRAM safety headroom remains separate. Tuning first optimizes short-prompt generation, then prompt processing while keeping at least 90% of the measured generation speed. Later starts reuse a matching tuning result.
+This requests 2 GiB of extra VRAM headroom and 8 GiB of available system RAM. RAM reservation reduces the model-selection budget and rejects tuning trials that dip below it. Selecting an over-budget model overrides the estimate check, while measured tuning limits still apply. It is a headroom target, not an operating-system memory lock; other applications can still consume memory. VRAM safety headroom remains separate. Tuning first optimizes short-prompt generation, then prompt processing while keeping at least 90% of the measured generation speed. Later starts reuse a matching tuning result.
 
 ## Testing
 
