@@ -1,0 +1,16 @@
+{
+  "release": "0.1.38-r2",
+  "checked_utc": "2026-10-03T21:20:30.683441+00:00",
+  "regression_tests": 53,
+  "simulated_hardware_profiles": 24,
+  "chat": "Real local Atomic Q5 returned the requested numeral 4; rendered model template contained no system turn",
+  "storage": "Read-only uncached test on the actual model volume; NVMe identified; slow sample notice exercised",
+  "sample_read_mib_s": 428.4,
+  "sample_bytes": 33554432,
+  "sample_is_not_a_drive_or_inference_benchmark": true,
+  "linux_shell_syntax": "passed",
+  "documentation_links": "passed",
+  "paper_pages": 4,
+  "windows": "Platform logic simulated; native Windows execution not available",
+  "powershell_syntax": "install.ps1, start-unleashed.ps1 and BUILD-UNLEASHED.ps1 parsed with PowerShell 7.6.6 on Linux; not Windows execution"
+}

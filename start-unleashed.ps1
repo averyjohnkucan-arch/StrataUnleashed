@@ -13,7 +13,8 @@ $env:XDG_CONFIG_HOME = Join-Path $PSScriptRoot 'work\config'
 $env:PYTHONDONTWRITEBYTECODE = '1'
 $python = Join-Path $PSScriptRoot '.venv\Scripts\python.exe'
 if (-not (Test-Path $python)) {
-    if (Get-Command py -ErrorAction SilentlyContinue) { & py -3 -m venv .venv }
+    if ($env:STRATA_PYTHON) { & $env:STRATA_PYTHON -m venv .venv }
+    elseif (Get-Command py -ErrorAction SilentlyContinue) { & py -3 -m venv .venv }
     else { & python -m venv .venv }
     if ($LASTEXITCODE -ne 0) { throw 'Creating the local Python environment failed.' }
 }

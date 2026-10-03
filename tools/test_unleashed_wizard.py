@@ -12,6 +12,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 from tools import unleashed_wizard as W
+from tools import unleashed_download as D
+from tools import unleashed_hardware as H
 from tools import unleashed_catalog as C
 
 GIB = W.GIB
@@ -158,7 +160,7 @@ class WizardTests(unittest.TestCase):
             p = Path(td) / "file.gguf"
             p.with_suffix(".gguf.part").write_bytes(data[:4])
             with patch.object(
-                W.requests,
+                D.requests,
                 "get",
                 return_value=Response(
                     data[4:],
@@ -166,7 +168,7 @@ class WizardTests(unittest.TestCase):
                     {"Content-Range": f"bytes 4-{len(data)-1}/{len(data)}"},
                 ),
             ) as get:
-                W.download_file(
+                D.download_file(
                     "https://example.test/model", p, len(data), digest, progress=False
                 )
                 self.assertEqual(get.call_args.kwargs["headers"]["Range"], "bytes=4-")
@@ -178,32 +180,32 @@ class WizardTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(dir=W.ROOT / "work/tmp") as td:
             p = Path(td) / "x.gguf"
             p.with_suffix(".gguf.part").write_bytes(b"old")
-            with patch.object(W.requests, "get", return_value=Response(data)):
-                W.download_file("url", p, len(data), digest, progress=False)
+            with patch.object(D.requests, "get", return_value=Response(data)):
+                D.download_file("url", p, len(data), digest, progress=False)
             self.assertEqual(p.read_bytes(), data)
 
     def test_bad_range_and_digest_never_publish(self):
         with tempfile.TemporaryDirectory(dir=W.ROOT / "work/tmp") as td:
             p = Path(td) / "x.gguf"
             with patch.object(
-                W.requests,
+                D.requests,
                 "get",
                 return_value=Response(b"bad", 206, {"Content-Range": "bytes 1-3/3"}),
             ):
                 with self.assertRaisesRegex(ValueError, "range"):
-                    W.download_file("url", p, 3, "0" * 64, progress=False)
-            with patch.object(W.requests, "get", return_value=Response(b"bad")):
+                    D.download_file("url", p, 3, "0" * 64, progress=False)
+            with patch.object(D.requests, "get", return_value=Response(b"bad")):
                 with self.assertRaisesRegex(ValueError, "SHA256"):
-                    W.download_file("url", p, 3, "0" * 64, progress=False)
+                    D.download_file("url", p, 3, "0" * 64, progress=False)
             self.assertFalse(p.exists())
             self.assertEqual(len(list(Path(td).glob("*.bad-*"))), 1)
 
     def test_truncated_download_retains_resume_partial(self):
         with tempfile.TemporaryDirectory(dir=W.ROOT / "work/tmp") as td:
             p = Path(td) / "x.gguf"
-            with patch.object(W.requests, "get", return_value=Response(b"abc")):
+            with patch.object(D.requests, "get", return_value=Response(b"abc")):
                 with self.assertRaisesRegex(ValueError, "Incomplete"):
-                    W.download_file("url", p, 6, "0" * 64, progress=False)
+                    D.download_file("url", p, 6, "0" * 64, progress=False)
             self.assertEqual(p.with_suffix(".gguf.part").read_bytes(), b"abc")
 
     def test_existing_bad_file_not_overwritten(self):
@@ -211,15 +213,15 @@ class WizardTests(unittest.TestCase):
             p = Path(td) / "x.gguf"
             p.write_bytes(b"bad")
             with self.assertRaisesRegex(ValueError, "Existing"):
-                W.download_file("url", p, 3, "0" * 64, progress=False)
+                D.download_file("url", p, 3, "0" * 64, progress=False)
             self.assertEqual(p.read_bytes(), b"bad")
 
     def test_verified_existing_file_is_reused(self):
         with tempfile.TemporaryDirectory(dir=W.ROOT / "work/tmp") as td:
             p = Path(td) / "x.gguf"
             p.write_bytes(b"ok")
-            with patch.object(W.requests, "get") as get:
-                W.download_file(
+            with patch.object(D.requests, "get") as get:
+                D.download_file(
                     "url", p, 2, hashlib.sha256(b"ok").hexdigest(), progress=False
                 )
                 get.assert_not_called()
@@ -231,7 +233,7 @@ class WizardTests(unittest.TestCase):
             "0, GPU A, 8192, 7000, 8.6, 600\n1, GPU B, 24576, 23000, 8.9, 600\n",
             "",
         )
-        with patch.object(W.platform, "system", return_value="Windows"), patch.object(
+        with patch.object(H.platform, "system", return_value="Windows"), patch.object(
             W.subprocess, "run", return_value=result
         ):
             s = W.scan_system()
@@ -262,6 +264,12 @@ class WizardTests(unittest.TestCase):
             io.StringIO()
         ), patch.object(
             Path, "write_text"
+        ), patch.object(
+            W.unleashed, "split_paths", return_value=[Path(__file__)]
+        ), patch.object(
+            W,
+            "scan_storage",
+            return_value={"path": "test", "transport": "nvme", "warnings": []},
         ):
             self.assertEqual(
                 W.main(
@@ -311,13 +319,13 @@ class WizardTests(unittest.TestCase):
             C.resolve_url("owner/repo", "main", "file.gguf")
 
     def test_second_downloader_is_rejected(self):
-        if W.os.name == "nt":
+        if D.os.name == "nt":
             self.skipTest(
                 "Same-process Windows byte-lock behavior differs; exercised by implementation"
             )
-        with W.download_lock():
+        with D.download_lock():
             with self.assertRaisesRegex(ValueError, "Another"):
-                with W.download_lock():
+                with D.download_lock():
                     pass
 
     def test_occupied_port_is_detected(self):

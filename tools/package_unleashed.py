@@ -7,10 +7,11 @@ import argparse, hashlib, json, os, platform, re, subprocess, tarfile, time, zip
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-VERSION = re.search(
+ENGINE_VERSION = re.search(
     r"project\(strata VERSION ([0-9.]+)",
     (ROOT / "CMakeLists.txt").read_text(encoding="utf-8-sig"),
 )[1]
+VERSION = (ROOT / "UNLEASHED_VERSION").read_text().strip()
 DIRECTORIES = (
     "src",
     "include",
@@ -40,6 +41,11 @@ FILES = (
     "BUILD-UNLEASHED.ps1",
     "BUILD-UNLEASHED.sh",
     "RELEASE-NOTES.md",
+    "UNLEASHED_VERSION",
+    "CONTRIBUTING.md",
+    "install.sh",
+    "install.ps1",
+    "install_unleashed.py",
 )
 
 
@@ -112,7 +118,7 @@ def main():
             "target": target,
             "source_commit": srcid,
             "upstream_commit": "99f3dbd0b21d1401b3769e0c0d963913607f380b",
-            "upstream_version": VERSION,
+            "upstream_version": ENGINE_VERSION,
             "kind": (
                 "binary-and-source" if binary and binary.is_file() else "source-build"
             ),
@@ -130,6 +136,7 @@ def main():
             "requirements": {
                 "python": "3.10+",
                 "gpu": "NVIDIA CUDA; bundled Linux engine targets architecture 89",
+                "cuda_architectures": [89] if target.startswith("linux") else [],
                 "linux_binary_abi": (
                     "glibc 2.43; GLIBCXX_3.4.32; AVX2/FMA/F16C/BMI2 CPU; rebuild on older systems"
                     if target.startswith("linux")

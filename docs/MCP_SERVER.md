@@ -1,3 +1,5 @@
+> **Upstream reference.** This page describes Strata's engine or a specialized upstream workflow. For Unleashed model selection, download and setup, start with [the installation guide](INSTALL.md).
+
 # Strata's MCP server: let your AI assistant install and run Strata
 
 `tools/strata_mcp.py` is an [MCP](https://modelcontextprotocol.io) server for the AI assistant you already use

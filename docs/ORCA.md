@@ -1,3 +1,5 @@
+> **Upstream reference.** This page describes Strata's engine or a specialized upstream workflow. For Unleashed model selection, download and setup, start with [the installation guide](INSTALL.md).
+
 # OrcaRouter IQ3_XXS compatibility
 
 Validated on Linux with an RTX 5090 (32 GB), Ryzen 9 9950X3D and 128 GB RAM on 2026-09-27.

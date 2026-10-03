@@ -3,403 +3,31 @@
 from __future__ import annotations
 
 import argparse
-import csv
-import hashlib
 import json
-import os
-import platform
-import re
-import shutil
 import socket
 import subprocess
 import sys
-import time
-from contextlib import contextmanager
 from pathlib import Path
 
-import psutil
 import requests
-from tqdm import tqdm
+from tools.unleashed_download import download_lock, download_model
+from tools.unleashed_hardware import scan_system, assess, recommendations
 
 import unleashed
 from tools.unleashed_catalog import (
     CATALOG,
     ROOT,
-    SOURCES,
     inspect_headers,
-    resolve_url,
-    safe_path,
     refresh_catalog,
 )
 from tools.gguf_reader import GGUFFile
+from tools.unleashed_storage import scan_storage
 
 GIB = 1024**3
-MIB = 1024**2
-
-
-@contextmanager
-def download_lock():
-    """Protect resumable files from a second setup process on either platform."""
-    with (ROOT / "work/model-download.lock").open("a+b") as lock:
-        try:
-            if os.name == "nt":
-                import msvcrt
-
-                lock.seek(0)
-                if not lock.read(1):
-                    lock.write(b"0")
-                    lock.flush()
-                lock.seek(0)
-                msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)
-            else:
-                import fcntl
-
-                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except OSError as exc:
-            raise ValueError(
-                "Another Unleashed model download is active; wait for it to finish"
-            ) from exc
-        try:
-            yield
-        finally:
-            if os.name == "nt":
-                lock.seek(0)
-                msvcrt.locking(lock.fileno(), msvcrt.LK_UNLCK, 1)
-            else:
-                fcntl.flock(lock, fcntl.LOCK_UN)
 
 
 def version():
-    return re.search(
-        r"project\(strata VERSION ([0-9.]+)",
-        (ROOT / "CMakeLists.txt").read_text(encoding="utf-8-sig"),
-    )[1]
-
-
-def scan_system():
-    ram = psutil.virtual_memory()
-    errors, cards = [], []
-    try:
-        result = subprocess.run(
-            [
-                "nvidia-smi",
-                "--query-gpu=index,name,memory.total,memory.free,compute_cap,driver_version",
-                "--format=csv,noheader,nounits",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=15,
-            check=True,
-        )
-        for row in csv.reader(result.stdout.splitlines()):
-            idx, name, total, free, cc, driver = [x.strip() for x in row]
-            cards.append(
-                {
-                    "index": int(idx),
-                    "name": name,
-                    "total_mib": float(total),
-                    "free_mib": float(free),
-                    "compute_capability": float(cc),
-                    "driver": driver,
-                }
-            )
-    except (OSError, subprocess.SubprocessError, ValueError) as exc:
-        errors.append(
-            f"NVIDIA GPU/driver scan unavailable ({type(exc).__name__}); this tuner requires one NVIDIA CUDA GPU."
-        )
-    cpu = unleashed.cpu_identity()
-    cpu["avx2"] = None
-    if platform.system() == "Linux" and Path("/proc/cpuinfo").exists():
-        cpu["avx2"] = "avx2" in Path("/proc/cpuinfo").read_text().split()
-    tools = {
-        name: shutil.which(name)
-        for name in ("cmake", "ninja", "nvcc", "cl" if os.name == "nt" else "c++")
-    }
-    cuda = (
-        Path(os.environ.get("CUDA_PATH", "/usr/local/cuda"))
-        / "bin"
-        / ("nvcc.exe" if os.name == "nt" else "nvcc")
-    )
-    if not tools["nvcc"] and cuda.is_file():
-        tools["nvcc"] = str(cuda)
-    if not tools["nvcc"] and os.name != "nt":
-        tools["nvcc"] = next(
-            (
-                str(p)
-                for p in sorted(
-                    Path("/usr/local").glob("cuda-*/bin/nvcc"), reverse=True
-                )
-            ),
-            None,
-        )
-    engine_runs = False
-    if unleashed.engine_path().is_file():
-        try:
-            check = subprocess.run(
-                [str(unleashed.engine_path()), "--help"],
-                capture_output=True,
-                timeout=15,
-            )
-            engine_runs = check.returncode == 0
-        except (OSError, subprocess.SubprocessError):
-            pass
-    built_for = ""
-    try:
-        built_for = json.loads((ROOT / "build/UNLEASHED-BUILD.json").read_text())["gpu"]
-    except (OSError, KeyError, ValueError):
-        pass
-    return {
-        "os": platform.system(),
-        "platform": platform.platform(),
-        "machine": platform.machine(),
-        "cpu": cpu,
-        "ram_total": ram.total,
-        "ram_available": ram.available,
-        "disk_free": shutil.disk_usage(ROOT).free,
-        "storage_path": str(ROOT / "models"),
-        "gpus": cards,
-        "tools": tools,
-        "errors": errors,
-        "engine_runs": engine_runs,
-        "engine_built_for": built_for,
-    }
-
-
-def model_directory(entry):
-    # Repository ID and commit isolate providers, revisions, and similarly named quants.
-    provider = entry["provider"]
-    quant = re.sub(r"[^A-Za-z0-9_.-]", "_", entry["quant"])
-    return ROOT / "models" / provider / quant / entry["revision"][:12]
-
-
-def remaining_download(entry):
-    dest = model_directory(entry)
-    remaining = 0
-    for f in entry["files"]:
-        path = dest / Path(f["path"]).name
-        part = path.with_suffix(path.suffix + ".part")
-        size = (
-            path.stat().st_size
-            if path.is_file()
-            else (part.stat().st_size if part.is_file() else 0)
-        )
-        remaining += max(0, f["size"] - min(size, f["size"]))
-    return remaining
-
-
-def assess(
-    entry, system, gpu_index=0, reserve_mib=0, context=16384, download_bytes=None
-):
-    """Conservative estimates for this tuner's resident-expert mode; never promise a fit."""
-    ins = entry["inspection"]
-    blocked = list(ins["reasons"])
-    warnings = []
-    if system["os"] not in ("Linux", "Windows") or system["machine"].lower() not in (
-        "amd64",
-        "x86_64",
-    ):
-        blocked.append("This CLI supports x86-64 Windows and Linux")
-    if system["cpu"].get("avx2") is False:
-        blocked.append("The CPU lacks AVX2, required by this build")
-    gpu = next((g for g in system["gpus"] if g["index"] == gpu_index), None)
-    if gpu is None:
-        blocked.append(
-            "No usable NVIDIA GPU selected (AMD/CPU-only tuning is not implemented)"
-        )
-    elif gpu["compute_capability"] < 7.5:
-        blocked.append(
-            "GPU compute capability must be at least 7.5 (RTX 20 series or newer)"
-        )
-    # The PLE table is mapped from disk, not counted as a permanently resident RAM allocation.
-    # Include expert arena, two dense copies, OS/loader overhead, and modest context growth.
-    ram_need = (
-        ins["expert_bytes"]
-        + 2 * ins["dense_bytes"]
-        + 6 * GIB
-        + max(0, context - 16384) * 65536
-    )
-    disk_need = (
-        (remaining_download(entry) if download_bytes is None else download_bytes)
-        + ins["pack_bytes"]
-        + 2 * GIB
-    )
-    # Upper bound for 48 layers of FP16 K/V at 2 heads x 256 values + index/workspace allowance.
-    vram_need = ins["dense_bytes"] + context * 48 * 2 * 256 * 4 + 2 * GIB
-    if ram_need > system["ram_total"]:
-        blocked.append(
-            f'Estimated resident RAM need {ram_need / GIB:.1f} GiB exceeds installed {system["ram_total"] / GIB:.1f} GiB'
-        )
-    elif ram_need > system["ram_available"]:
-        blocked.append(
-            f'Estimated RAM need {ram_need / GIB:.1f} GiB exceeds currently available {system["ram_available"] / GIB:.1f} GiB; close other apps'
-        )
-    if disk_need > system["disk_free"]:
-        blocked.append(
-            f'Need about {disk_need / GIB:.1f} GiB more disk space; {system["disk_free"] / GIB:.1f} GiB free'
-        )
-    budget = 0
-    if gpu:
-        safety = max(512, int(gpu["total_mib"] * 0.02 + 0.999))
-        budget = (gpu["free_mib"] - reserve_mib - safety) * MIB
-        if budget < vram_need:
-            blocked.append(
-                f"Estimated startup VRAM {vram_need / GIB:.1f} GiB exceeds {max(0,budget) / GIB:.1f} GiB available after reservation/headroom"
-            )
-        if gpu["compute_capability"] != 8.9 and (ROOT / "build/strata").exists():
-            warnings.append(
-                "The bundled Linux binary targets Ada (sm89); build locally for this GPU"
-            )
-    needs_build = not system.get("engine_runs", False)
-    if gpu and system.get("engine_runs"):
-        local_build = gpu["name"] in system.get("engine_built_for", "")
-        bundled_build = (
-            system["os"] == "Linux"
-            and gpu["compute_capability"] == 8.9
-            and not system.get("engine_built_for")
-        )
-        needs_build = not (local_build or bundled_build)
-    missing = [n for n, p in system["tools"].items() if not p]
-    if needs_build:
-        if missing:
-            blocked.append(
-                "No compatible engine ready; source build needs: "
-                + ", ".join(missing)
-                + (
-                    " (use an x64 Visual Studio developer terminal)"
-                    if system["os"] == "Windows"
-                    else ""
-                )
-            )
-        else:
-            warnings.append(
-                "The engine will be built locally for this machine before tuning"
-            )
-    warnings.append(
-        "RAM/VRAM are conservative estimates; measured tuning decides the actual fit and speed"
-    )
-    return {
-        "status": "cannot-run-now" if blocked else "candidate",
-        "reasons": blocked,
-        "warnings": warnings,
-        "ram_estimate_bytes": ram_need,
-        "additional_disk_bytes": disk_need,
-        "vram_estimate_bytes": vram_need,
-        "vram_budget_bytes": max(0, budget),
-        "needs_build": needs_build,
-    }
-
-
-def recommendations(rows, intent):
-    eligible = [r for r in rows if r["assessment"]["status"] == "candidate"]
-    preferred = {
-        "small": ["ista", "ista-coder"],
-        "coder": ["ista-coder", "ista"],
-        "large": ["atomic", "ista"],
-        "uncensored": ["huihui"],
-    }[intent]
-    if intent == "uncensored":
-        eligible = [r for r in eligible if r["model"]["provider"] == "huihui"]
-
-    def rank(row):
-        e = row["model"]
-        provider = e["provider"]
-        priority = (
-            preferred.index(provider) if provider in preferred else len(preferred)
-        )
-        size = (
-            e["download_bytes"]
-            if intent in ("small", "coder", "uncensored")
-            else -e["download_bytes"]
-        )
-        return priority, size
-
-    return sorted(eligible, key=rank)
-
-
-def sha256(path):
-    h = hashlib.sha256()
-    with Path(path).open("rb") as f:
-        for chunk in iter(lambda: f.read(8 * MIB), b""):
-            h.update(chunk)
-    return h.hexdigest()
-
-
-def download_file(url, dest, size, digest, session=requests, progress=True):
-    """Resume only the pinned object; validate range, length and SHA256 before rename."""
-    dest = Path(dest)
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    if dest.is_file():
-        if dest.stat().st_size == size and sha256(dest) == digest:
-            return dest
-        raise ValueError(
-            f"Existing file failed verification: {dest}; move it aside before retrying"
-        )
-    part = dest.with_suffix(dest.suffix + ".part")
-    offset = part.stat().st_size if part.exists() else 0
-    if offset > size:
-        raise ValueError(f"Partial download exceeds expected length: {part}")
-    if offset < size:
-        headers = {"Accept-Encoding": "identity"}
-        if offset:
-            headers["Range"] = f"bytes={offset}-"
-        with session.get(url, headers=headers, stream=True, timeout=(15, 60)) as r:
-            r.raise_for_status()
-            if offset and r.status_code == 200:
-                offset = 0  # Server ignored Range; restart instead of appending corrupt data.
-            elif r.status_code == 206:
-                m = re.fullmatch(
-                    r"bytes (\d+)-(\d+)/(\d+)", r.headers.get("Content-Range", "")
-                )
-                if not m or int(m[1]) != offset or int(m[3]) != size:
-                    raise ValueError("Download server returned an invalid byte range")
-            elif r.status_code != 200:
-                raise ValueError(f"Unexpected download status: {r.status_code}")
-            with part.open("ab" if offset else "wb") as out, tqdm(
-                total=size,
-                initial=offset,
-                unit="B",
-                unit_scale=True,
-                desc=dest.name,
-                disable=not progress,
-            ) as bar:
-                for data in r.iter_content(4 * MIB):
-                    if offset + len(data) > size:
-                        raise ValueError("Download exceeded the published file size")
-                    out.write(data)
-                    offset += len(data)
-                    bar.update(len(data))
-    if part.stat().st_size != size:
-        raise ValueError(f"Incomplete download (rerun to resume): {part}")
-    if sha256(part) != digest:
-        # Do not leave a full-size bad partial that would fail forever on every retry.
-        part.rename(part.with_name(part.name + f".bad-{time.time_ns()}"))
-        raise ValueError(
-            "SHA256 mismatch; corrupt partial preserved as .bad-*; rerun to download again"
-        )
-    part.replace(dest)
-    return dest
-
-
-def download_model(entry):
-    paths = []
-    for file in entry["files"]:
-        safe_path(file["path"])
-        path = model_directory(entry) / Path(file["path"]).name
-        paths.append(
-            download_file(
-                resolve_url(entry["repo"], entry["revision"], file["path"]),
-                path,
-                file["size"],
-                file["sha256"],
-            )
-        )
-    # Re-read actual downloaded headers as an independent check before handing them to the packer.
-    check = inspect_headers(
-        [GGUFFile(p) for p in paths], [p.stat().st_size for p in paths]
-    )
-    if not check["compatible"]:
-        raise ValueError("Downloaded model cannot run: " + "; ".join(check["reasons"]))
-    return paths[0]
+    return (ROOT / "UNLEASHED_VERSION").read_text().strip()
 
 
 def local_entry(path):
@@ -440,6 +68,18 @@ def port_available(port):
             return False
 
 
+def show_storage(storage):
+    print(f"Drive: {storage.get('device', storage['path'])} ({storage['transport']})")
+    if storage.get("read_mib_s") is not None:
+        print(
+            f"Read-speed sample: {storage['read_mib_s']:.0f} MiB/s (OS cache bypassed)."
+        )
+    else:
+        print(storage.get("speed_note", "Read speed is not available."))
+    for warning in storage.get("warnings", []):
+        print(f"Note: {warning}")
+
+
 def show_scan(s):
     print(f"\nStrata Unleashed {version()} — system scan")
     print(
@@ -453,6 +93,8 @@ def show_scan(s):
         print(
             f'GPU {g["index"]}: {g["name"]}, {g["total_mib"]/1024:.1f} GiB VRAM, {g["free_mib"]/1024:.1f} GiB free; driver {g["driver"]}'
         )
+    if s.get("storage"):
+        show_storage(s["storage"])
     for err in s["errors"]:
         print(err)
     print(
@@ -489,7 +131,11 @@ def show_models(rows, intent):
     for n, row in enumerate(rows, 1):
         e, fit = row["model"], row["assessment"]
         label = e["id"]
-        status = "RECOMMENDED" if label == best else fit["status"].upper()
+        status = (
+            "Recommended"
+            if label == best
+            else ("Fits estimate" if fit["status"] == "candidate" else "Not available")
+        )
         print(
             f'{n:2}  {label:46} {e["download_bytes"]/GIB:6.1f} GiB {fit["ram_estimate_bytes"]/GIB:6.1f} GiB  {status}'
         )
@@ -528,6 +174,7 @@ def launch_command(path, a):
         ("--retune", a.retune),
         ("--tune-only", a.tune_only),
         ("--build", a.build),
+        ("--chat", a.chat),
     ):
         if enabled:
             cmd.append(flag)
@@ -581,6 +228,11 @@ def main(argv=None):
         "--mtp", type=Path, help="Optional already prepared MTP runtime folder"
     )
     ap.add_argument("--build", action="store_true", help="Rebuild engine for this GPU")
+    ap.add_argument(
+        "--chat",
+        action="store_true",
+        help="Open terminal test chat with no system prompt",
+    )
     ap.add_argument("--retune", action="store_true")
     ap.add_argument("--tune-only", action="store_true")
     ap.add_argument("--download-only", action="store_true")
@@ -631,6 +283,9 @@ def main(argv=None):
     entries = catalog["models"]
     if a.local_model:
         entries = [local_entry(a.local_model)]
+        system["storage"] = scan_storage(a.local_model.parent, a.local_model)
+        if not a.json:
+            show_storage(system["storage"])
     interactive = not (a.list or a.yes)
     if interactive:
         if a.intent is None:
@@ -705,20 +360,21 @@ def main(argv=None):
             f'Model card and license: https://huggingface.co/{e["repo"]}/tree/{e["revision"]}'
         )
     print(
-        "Procedure: verify/download shards, prepare the model, benchmark decode, then prefill, and save the best measured configuration."
+        "We will download the model, check its files, and find settings that work well on your PC."
     )
     if interactive:
         print(
-            "Action: 1) Download, tune and serve  2) Download and tune only  3) Download only  0) Exit"
+            "Next: 1) Download, set up and chat  2) Download, set up and open the API  3) Set up only  4) Download only  0) Exit"
         )
-        action = ask_int("Action", 1, 0, 3)
+        action = ask_int("Next", 1, 0, 4)
         if action == 0:
             return 0
-        a.tune_only = action == 2
-        a.download_only = action == 3
+        a.chat = action == 1
+        a.tune_only = action == 3
+        a.download_only = action == 4
     elif not a.yes:
         ap.error("Noninteractive execution requires --yes and an explicit model")
-    if not a.tune_only and not a.download_only:
+    if not a.tune_only and not a.download_only and not a.chat:
         if interactive:
             suggested = next(
                 (
@@ -742,6 +398,11 @@ def main(argv=None):
     else:
         with download_lock():
             path = download_model(e)
+    model_files = unleashed.split_paths(path)
+    sample = max(model_files, key=lambda p: p.stat().st_size)
+    storage = scan_storage(path.parent, sample)
+    show_storage(storage)
+    (ROOT / "work/storage-check.json").write_text(json.dumps(storage, indent=2) + "\n")
     receipt = {
         "model": e["id"],
         "path": str(path),
@@ -755,6 +416,10 @@ def main(argv=None):
     if a.download_only:
         print(f"Verified model ready: {path}")
         return 0
+    print(
+        "Preparing and tuning your model. The first setup can take a while; later starts reuse the result.",
+        flush=True,
+    )
     return subprocess.run(launch_command(path, a), cwd=ROOT).returncode
 
 

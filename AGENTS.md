@@ -1,5 +1,7 @@
 # AGENTS.md
 
+This is the Strata Unleashed fork. For its model picker/downloader and terminal test chat, use `cli-unleashed.sh` / `CLI-UNLEASHED.bat` and read [docs/INSTALL.md](docs/INSTALL.md). Keep hardware detection portable; do not embed the development machine's paths, GPU identity or tuning settings. The upstream architecture notes below remain relevant to engine work.
+
 Strata runs the Qwen3.8-Flash-Next mixture-of-experts model (and its Coder, Swift 1.5 and Unsloth variants) on a
 normal PC: one NVIDIA or AMD graphics card plus system RAM, on Windows or Linux. It has a C++/CUDA/HIP engine
 (`src/`, `include/`), a Python server with an OpenAI- and Anthropic-compatible API and a web app (`serve/`), and a

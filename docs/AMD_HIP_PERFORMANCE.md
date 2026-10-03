@@ -1,3 +1,5 @@
+> **Upstream reference.** This page describes Strata's engine or a specialized upstream workflow. For Unleashed model selection, download and setup, start with [the installation guide](INSTALL.md).
+
 # RX 7900 XTX support and performance evidence
 
 This opt-in Linux `gfx1100` backend supersedes the initial support in

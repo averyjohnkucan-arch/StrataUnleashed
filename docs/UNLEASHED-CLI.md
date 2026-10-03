@@ -1,6 +1,6 @@
 # Interactive model setup and tuner
 
-Strata Unleashed **0.1.38** matches the current upstream Strata engine version. The CLI runs on x86-64 Windows and Linux. Its measured self-tuner currently uses **one NVIDIA CUDA GPU**; it does not promise AMD, CPU-only, or multi-GPU tuning.
+Strata Unleashed **0.1.38-r2** uses the upstream Strata 0.1.38 engine version. The CLI runs on x86-64 Windows and Linux. Its measured self-tuner currently uses **one NVIDIA CUDA GPU**; it does not promise AMD, CPU-only, or multi-GPU tuning.
 
 ## Start
 
@@ -28,11 +28,15 @@ The Linux release includes the previously tested Ada/sm89 binary. It requires gl
 2. Choose compact/general, coding, larger model, or uncensored use. Select a GPU when several are present.
 3. Set extra VRAM to keep free for other applications and context length. Automatic safety headroom is separate.
 4. Compare all model/quant choices. Each shows download size, estimated RAM and either candidate/recommended status or specific reasons it cannot run now.
-5. Choose download only, download and tune, or download/tune/serve. Serving prompts for an available local port. Nothing downloads until you select an action.
+5. Choose download/setup/chat (the default), download/setup/API, setup only, or download only. API mode prompts for an available local port. Nothing downloads until you select an action.
 6. Download every shard from a pinned Hugging Face revision, resume partial files, verify published SHA256 hashes, and check actual headers before packing.
 7. Run the procedural tuner: fit the VRAM budget, optimize 512-input/512-output decode, then prefill while retaining at least 90% of the measured decode reference. Save the result for later reuse.
 
 Downloaded weights stay in `models/<provider>/<quant>/<revision>/`. Catalog updates, headers, temporary files and selections stay in `work/`; the scanner never searches unrelated folders for models. `--local-model` explicitly opens existing weights read-only, and writes its prepared pack and tuning results inside the project.
+
+After setup, terminal chat uses no system prompt: only user/assistant turns, with template thinking instructions disabled. The rendered prompt is checked before inference. `/new`, `/tokens N` and `/quit` control the test session. API mode keeps the ordinary web/API flow.
+
+The scan identifies the storage device and takes an uncached, read-only sequential sample from an existing file (up to 32 MiB). The selected model's volume is checked again before launch. Non-NVMe/unknown storage receives an experience-may-vary notice; samples below 500 MiB/s receive a slow-read notice. Neither is a hard compatibility block or a guarantee of inference speed. If uncached reads are unsupported, no speed is claimed.
 
 ## Catalog and recommendation policy
 
@@ -104,6 +108,7 @@ Use the same arguments after `CLI-UNLEASHED.bat` on Windows.
 | `--context N` | 9,216–262,144 tokens; default 16,384 |
 | `--port N` | Local HTTP port, default 8100 |
 | `--mtp PATH` | Optional already prepared MTP runtime |
+| `--chat` | Open terminal inference test chat with no system prompt |
 | `--build` | Rebuild the engine for this machine |
 | `--retune` | Repeat measurements even if a cached result exists |
 | `--tune-only` | Tune and save configuration without starting the HTTP server |

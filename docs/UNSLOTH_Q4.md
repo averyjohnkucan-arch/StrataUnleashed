@@ -1,3 +1,5 @@
+> **Upstream reference.** This page describes Strata's engine or a specialized upstream workflow. For Unleashed model selection, download and setup, start with [the installation guide](INSTALL.md).
+
 # Unsloth UD-Q4_K_XL (experimental)
 
 **Experimental.** Setup offers it from engine 0.1.32 ([below](#setup)); the manual workflow after that section works

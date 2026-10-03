@@ -1,70 +1,55 @@
-# Something went wrong?
+# Help with Strata Unleashed
 
-The common problems and what to do. Back to the [README](../README.md#something-went-wrong). The full table of
-error messages, with the older engine fixes, is in the [details](DETAILS.md#troubleshooting).
+## No models are available
 
-## While installing or starting
+Read the reason beside each choice. Check **available** RAM, not just installed RAM; close other large applications. Lower context or extra VRAM reservation if those are the constraint. A missing compiler or CUDA Toolkit is a setup issue, not a model-size issue. Unsupported expert encodings cannot be fixed by adding RAM.
 
-**My PC froze, or got very slow, the first time Strata started.**
-That's normal while it starts, most of all the first time. Strata loads 35-55 GB into your RAM, locks part of it for
-the graphics card, and works out how much of the model fits on your GPU. The mouse can freeze for a few minutes.
-**Wait, and don't close the window.** The next starts are much faster. Still frozen after 10 minutes? Restart the
-PC, close other programs (browsers use a lot of RAM) and try again. If it keeps happening, pick a smaller size (Q2_0
-or IQ2_XS).
+The guided tuner supports one NVIDIA GPU. AMD, CPU-only and multi-GPU configurations described in some upstream references are not available through this workflow.
 
-**It stopped while downloading or installing.**
-Run `START-HERE.bat` (Linux: `./setup.sh`) again. It continues where it stopped.
+## “Not identified as NVMe” or a slow-drive warning
 
-**It says the NVIDIA driver is too old.**
-Update it (NVIDIA App or [nvidia.com/drivers](https://www.nvidia.com/drivers)), restart the PC, and run
-`START-HERE.bat` again.
+Your experience may vary. SATA/USB SSDs, hard drives and network or unidentified storage can load weights more slowly and affect disk-backed PLE reads. Move the model's entire shard family to an NVMe drive and use `--local-model` with its new path.
 
-**It says port 8080 is already in use.**
-Strata is already running. Look for its window. Or another program uses the port: `START-HERE.bat --port 8081`.
+The speed check reads up to 32 MiB from an existing file, bypassing the OS cache when supported. It writes no model data or disk-test files. Results vary with load and controller caching, and do not measure random-I/O inference throughput. When uncached reads are unavailable, setup says so rather than presenting cached RAM speed as SSD speed. A sample below 500 MiB/s produces an advisory notice even on NVMe.
 
-**Python or the build tools could not be installed.**
-Install what it names (links are printed), then run it again. Everything already done is kept.
+## Windows cannot find Python, CMake, Ninja or the compiler
 
-**The first start takes minutes.**
-It is reading 34-55 GB into RAM; the second start is faster while the files are in the OS cache. Started from Task
-Scheduler, it can be 24x slower: see [Running it at startup](DETAILS.md#running-it-at-startup-task-scheduler).
+The installer can install Python with WinGet. Source builds require Visual Studio C++ Build Tools, CUDA Toolkit, CMake and Ninja. Open an **x64 developer PowerShell**, then run `CLI-UNLEASHED.bat`. Ordinary PowerShell may not have the compiler environment loaded.
 
-## While it answers
+Windows is distributed as source/build scripts. Native Windows execution has not yet been validated by this project.
 
-**It's very slow and the disk light keeps blinking.**
-Your PC is out of free RAM. Close other programs, or pick a smaller size (Q2_0 or IQ2_XS).
+## Linux reports missing libraries or an unsupported GPU architecture
 
-**An answer stopped with "the engine stopped unexpectedly".**
-Usually not enough RAM (on Linux the system then stops the engine). Just send your message again: Strata starts the
-engine by itself. If it keeps happening, close other programs or pick a smaller size.
+The bundled engine targets Ada/sm89 and a recent Linux runtime. Rebuild with `./BUILD-UNLEASHED.sh` after installing the compiler/CUDA prerequisites, or use `--build`. The wizard checks whether the existing binary can execute before treating it as ready.
 
-**It says the prompt exceeds the context.**
-The conversation is longer than the context you chose. Start a new chat, or run `SETUP.bat` and pick more
-context.
+## Download interrupted, checksum failed, or a shard is missing
 
-**It is slower than the tables.**
-The monitor plugged into the graphics card and other GPU programs take VRAM from the expert cache; RAM running below
-its rated speed (enable EXPO/XMP in the BIOS) slows the CPU half.
+Choose the same model again to resume `.part` files. A checksum mismatch never becomes a completed model file. Corrupt partials get `.bad-*` names; remove them manually if you need the disk space. An invalid already completed file is left untouched; move it aside and retry.
 
-**Pictures are refused, or slow.**
-"this server was started without the vision encoder": the model was set up for text only - run setup again with
-`--vision gpu` (or `--vision cpu`). Pictures that take 10-30 s are read by the encoder on the CPU; `--vision gpu`
-(NVIDIA, ~1.4 GB of VRAM) makes it 0.1-0.5 s.
+Keep every shard in the same directory with its original filename. Do not mix revisions. `--local-model` reads the weights in place without copying them.
 
-## AMD cards
+## First setup takes a long time
 
-**"No AMD GPU found (the amdgpu driver's KFD topology is empty)" on Linux.**
-The kernel's amdgpu driver is not loaded for the card. Integrated Radeon GPUs are listed as not supported; setup
-lists every card it found and whether Strata can use it.
+A model may be over 100 GB. Download, checksum verification, packing and measured tuning are separate stages. During engine loading, the PC can become less responsive as tens of gigabytes enter RAM. Tuning tests multiple configurations; later starts reuse a matching result. The logs and measurements are under `work/`.
 
-**The engine stops at start with the card's name, its architecture and the build's list.**
-The engine was compiled for another card (for example after moving the Strata folder to another PC). Run
-`./setup.sh --setup --backend hip`: it compiles the engine for this card's architecture.
+## Another app needs VRAM
 
-**Large pinned host allocations fail on ROCm although RAM is free.**
-See [AMD_HIP.md](AMD_HIP.md#model-and-serving-configuration): the mapped expert mode avoids the full pinned arena.
+Use `--reserve-vram-mib 2048` to leave an extra 2 GiB. This is additional to automatic safety headroom. Changing the reserve creates a separate tuning result. Another application can still allocate memory later; no initial scan can prevent that.
 
-## Still stuck?
+## Port already in use
 
-Look in the [full troubleshooting table](DETAILS.md#troubleshooting), or open an
-[issue](https://github.com/Niko1221/Strata/issues) and attach `strata-<model>.log` from the Strata folder.
+Terminal test chat needs no HTTP port. For browser/API mode choose a free one, for example `--port 8101`. Do not stop an unrelated server just to free the default port.
+
+## Test chat says the template adds a system message
+
+Test chat intentionally refuses hidden system turns. It uses the model's template with thinking instructions off, checks the result, and passes only user/assistant messages. Do not “fix” this by silently inserting a different system prompt. Report the model ID and template revision.
+
+## The conversation is too long
+
+Type `/new` or lower the response limit with `/tokens 512`. Model context includes both your messages and generated replies. `/quit` shuts down the test-chat engine cleanly.
+
+## Reporting a problem
+
+Include your OS, GPU/VRAM, RAM, model ID or shard names, the command used, and the relevant error. `./cli-unleashed.sh --scan --json` produces a useful hardware/storage report. Review paths and other personal details before sharing logs. Do not post access tokens or private prompts.
+
+[Open an issue](https://github.com/averyjohnkucan-arch/StrataUnleashed/issues) · [Installation](INSTALL.md)

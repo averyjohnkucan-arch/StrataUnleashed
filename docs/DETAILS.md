@@ -1,3 +1,5 @@
+> **Upstream reference.** This page describes Strata's engine or a specialized upstream workflow. For Unleashed model selection, download and setup, start with [the installation guide](INSTALL.md).
+
 # Strata - the details
 
 The technical side of Strata: every measured number, the API, images, all settings and how the engine works.

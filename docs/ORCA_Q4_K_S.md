@@ -1,3 +1,5 @@
+> **Upstream reference.** This page describes Strata's engine or a specialized upstream workflow. For Unleashed model selection, download and setup, start with [the installation guide](INSTALL.md).
+
 # OrcaRouter Uncensored Q4_K_S (manual setup)
 
 This path uses the three original `orcarouter/Qwen3.8-Flash-Next-Uncensored-GGUF` Q4_K_S shards without rewriting their expert, embedding or PLE table bytes. It is separate from the installer model menu. Keep all three shard filenames together.

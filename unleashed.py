@@ -228,6 +228,12 @@ def main():
     )
     ap.add_argument("--tune-only", action="store_true")
     ap.add_argument(
+        "--chat",
+        action="store_true",
+        help="Open terminal test chat with no system prompt",
+    )
+    ap.add_argument("--chat-prompt", help="With --chat, run one prompt and exit")
+    ap.add_argument(
         "--build", action="store_true", help="Build the engine on this machine"
     )
     a = ap.parse_args()
@@ -374,6 +380,10 @@ def main():
         print(f"Validated configuration: {best}")
         return 0
     port = a.port if a.port is not None else cfg.get("port", 8100)
+    if a.chat:
+        from tools.unleashed_chat import session
+
+        return session(best, prompt=a.chat_prompt)
     print(
         f"Starting Strata Unleashed at http://127.0.0.1:{port} using {best}",
         flush=True,

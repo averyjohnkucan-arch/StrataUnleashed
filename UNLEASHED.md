@@ -1,6 +1,6 @@
 # Strata Unleashed
 
-For interactive hardware scanning, model/quant recommendations and downloads, start `cli-unleashed.sh` (Linux) or `CLI-UNLEASHED.bat` (Windows). See [the complete CLI guide](docs/UNLEASHED-CLI.md). The original direct launch commands below still work.
+For interactive hardware scanning, model/quant recommendations and downloads, start `cli-unleashed.sh` (Linux) or `CLI-UNLEASHED.bat` (Windows). See [the complete CLI guide](docs/UNLEASHED-CLI.md). The original direct launch commands below still work. Add `--chat` for terminal inference testing with no system prompt, or `--chat --chat-prompt "Reply with 4"` for a single test. The README also provides one-command app installation and model download.
 
 A local fork of Niko1221/Strata with the retained SSD changes, broader native weight formats, optional MTP, independent K/V precisions, and measured self-tuning. The supported model family is **Qwen3.8-Flash-Next / `qwen4exp`**, including its compatible quantized and pruned variants. This is not a generic engine for unrelated architectures or arbitrary attention dimensions.
 

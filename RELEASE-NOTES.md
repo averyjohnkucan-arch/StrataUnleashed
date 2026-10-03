@@ -1,4 +1,18 @@
-# Strata Unleashed 0.1.38
+# Strata Unleashed 0.1.38-r2
+
+This packaging revision keeps the Strata 0.1.38 engine and adds a simpler install-to-chat experience.
+
+- **Model selection and download are the starting point.** The README provides one command each for Windows and Linux; installers verify the release archive and start guided setup.
+- **Terminal inference test chat has no system prompt.** Only user/assistant messages enter the model template; hidden template system turns are rejected. Generation statistics count token IDs, not streamed chunks.
+- **Storage checks run on the user's machine.** Drive type and bounded uncached read speed are measured read-only. Non-NVMe/unknown storage and slow reads produce advisory warnings.
+- Hardware, download, storage, catalog and chat code now have separate responsibilities. Binary compatibility comes from a release manifest or local build receipt, not an assumed development GPU.
+- Installation, model selection, troubleshooting and contributor docs were rewritten around the fork. An engineering note is provided as Markdown and PDF; original upstream papers/references remain attributed.
+
+The engine and procedural tuning search are unchanged. Earlier Q5 throughput results below remain historical measurements of their recorded binary/hardware, not a guarantee on arbitrary machines. The installers do not install GPU drivers or compiler/CUDA toolchains. Windows remains a source/build release without native Windows validation.
+
+Validation: 53 regression tests passed, including 24 simulated machine profiles. Real Q5 terminal chat returned the requested answer with no rendered system turn. Read-only storage checks and document links passed. See [the validation record](docs/UNLEASHED-EXPERIENCE-VALIDATION.json).
+
+## Previous release: 0.1.38
 
 ## Interactive setup release
 
