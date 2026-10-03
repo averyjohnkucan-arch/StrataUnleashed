@@ -1,6 +1,6 @@
 # Install Strata Unleashed
 
-The app includes **model selection, download, preparation, tuning and chat**. You do not have to collect the model's shards yourself.
+Pick a model and setup handles the download, preparation and tuning. You can chat when it finishes.
 
 ## What you need
 
@@ -13,7 +13,7 @@ The app includes **model selection, download, preparation, tuning and chat**. Yo
 
 ### Source builds
 
-Windows currently needs an **x64 Visual Studio C++ developer terminal**, CUDA Toolkit, CMake and Ninja. Install Visual Studio Build Tools with the C++ desktop workload, then open its developer PowerShell and run setup. These are system prerequisites; the one-command installer does not silently install them or change drivers.
+Windows currently needs an **x64 Visual Studio C++ developer terminal**, CUDA Toolkit, CMake and Ninja. Install Visual Studio Build Tools with the C++ desktop workload, then open its developer PowerShell and run setup. Install these first. The setup command does not install them or change your drivers.
 
 Linux includes the validated Ada/sm89 binary, requiring glibc 2.43, GLIBCXX_3.4.32, AVX2 and CUDA 13 runtime/cuBLAS libraries. If it cannot run, or you have a different GPU architecture, setup builds locally when the required tools are available. Install a C++20 compiler, CUDA Toolkit, CMake and Ninja first. `./BUILD-UNLEASHED.sh` also builds explicitly.
 
@@ -33,7 +33,7 @@ bash -c "$(curl -fsSL https://raw.githubusercontent.com/averyjohnkucan-arch/Stra
 
 The installer gets the latest release, verifies SHA256SUMS and extracts it into Documents/StrataUnleashed. Python packages live in its `.venv`. It refuses to overwrite an unrelated nonempty folder; an existing Unleashed installation is reused without changing your source or model files.
 
-To choose a different destination, set `STRATA_INSTALL_DIR` before running the command. For an existing Git checkout, update deliberately with `git pull`; the installer does not replace it behind your back.
+To choose a different destination, set `STRATA_INSTALL_DIR` before running the command. If you cloned the repo, use `git pull` to update it.
 
 ## First setup
 
@@ -42,7 +42,7 @@ To choose a different destination, set `STRATA_INSTALL_DIR` before running the c
 3. Set optional VRAM reserved for other applications and the context length. Press Enter for defaults.
 4. Choose a model/quant. Setup explains unavailable choices and displays the download size.
 5. Choose **Download, set up and chat** for terminal inference testing, **open the API** for browser/API use, **set up only**, or **download only**.
-6. Wait for the verified download, model preparation and tuning. These can take a while; do not assume the process has stalled because a large model is loading.
+6. Wait for the download, setup and tuning. Large models take a while to load.
 
 The final terminal chat uses no system message. `/new` clears the conversation, `/tokens 512` changes the reply limit, and `/quit` closes the engine. Chat does not save your conversation to a transcript by default.
 

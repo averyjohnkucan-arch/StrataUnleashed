@@ -42,13 +42,13 @@ The scan identifies the storage device and takes an uncached, read-only sequenti
 
 The bundled catalog was checked against the publishers on **2026-10-03** and includes **22 complete model variants**. All shard directories were inspected, including tensors split across files. Sizes, SHA256 hashes and source revisions are recorded in [../data/unleashed-models.json](../data/unleashed-models.json).
 
-| Publisher | Included variants | Recommendation |
+| Publisher | Quants | Notes |
 |---|---|---|
-| [ISTA Flash Next](https://huggingface.co/ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF) | Q2_0, IQ2_XS, IQ3_XXS, IQ3_S | Preferred for compact/general use; the smallest fitting ISTA variant is the default |
-| [ISTA Flash Next Coder](https://huggingface.co/ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-Coder-GGUF) | IQ1_M (expert-pruned Coder release) | Preferred for coding |
-| [Atomic Chat](https://huggingface.co/AtomicChat/Qwen3.8-Flash-Next-GGUF) | AD-3.84bpw-IQ4_XS-M64, AD-4.27bpw-Q4_K_M-M64, AD-5.00bpw-Q5_K_M-M64 | Preferred for larger models; choose the largest fitting published Atomic option |
-| [HuiHui](https://huggingface.co/huihui-ai/Huihui-Qwen3.8-Flash-Next-abliterated-GGUF) | BF16, Q8_0, UD-Q4_K_XL | Preferred for uncensored/abliterated use; default to the smallest fitting HuiHui option |
-| [Unsloth](https://huggingface.co/unsloth/Qwen3.8-Flash-Next-GGUF) | BF16, Q8_0, UD-IQ1_M, UD-IQ1_S, UD-IQ3_XXS, UD-IQ4_XS, UD-Q2_K_XL, UD-Q3_K_XL, UD-Q4_K_XL, UD-Q5_K_XL, UD-Q6_K_XL | Available as explicit alternatives |
+| [ISTA Flash Next Coder](https://huggingface.co/ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-Coder-GGUF) | IQ1_M (expert-pruned Coder release) | Smallest option; coding focused |
+| [ISTA Flash Next](https://huggingface.co/ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF) | Q2_0, IQ2_XS, IQ3_XXS, IQ3_S | Small general models |
+| [Atomic Chat](https://huggingface.co/AtomicChat/Qwen3.8-Flash-Next-GGUF) | AD-3.84bpw-IQ4_XS-M64, AD-4.27bpw-Q4_K_M-M64, AD-5.00bpw-Q5_K_M-M64 | Main pick for larger models |
+| [Unsloth](https://huggingface.co/unsloth/Qwen3.8-Flash-Next-GGUF) | BF16, Q8_0, UD-IQ1_M, UD-IQ1_S, UD-IQ3_XXS, UD-IQ4_XS, UD-Q2_K_XL, UD-Q3_K_XL, UD-Q4_K_XL, UD-Q5_K_XL, UD-Q6_K_XL | Larger quants available; optional, not the first recommendation |
+| [HuiHui](https://huggingface.co/huihui-ai/Huihui-Qwen3.8-Flash-Next-abliterated-GGUF) | BF16, Q8_0, UD-Q4_K_XL | Uncensored / abliterated |
 
 “Up to 3-bit” includes ISTA's published IQ3_S family (approximately 3.5-bit in upstream's description), and the Coder's IQ1_M filename is not a claim that every tensor is one-bit. Mixed quantizations are checked by their actual tensor types, not filenames. Atomic currently publishes three Flash Next variants; imatrix, vision-projector and MTP artifacts are not presented as independent language models. This catalog covers **Flash Next**, not unrelated 27B or 2.4T architectures.
 

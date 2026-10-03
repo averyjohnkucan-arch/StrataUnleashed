@@ -4,7 +4,7 @@ The large model is a mixture of experts: each generated token uses only some of 
 
 <p align="center"><img src="media/how-it-works.svg" width="860" alt="Strata keeps frequently used experts on the GPU, other experts in RAM, and a lookup table on disk"></p>
 
-The inference engine comes from [Strata](https://github.com/Niko1221/Strata). Unleashed adds a model picker/downloader, broader quantization paths, optional-MTP operation, mixed cache formats and a procedural tuner.
+The inference engine comes from [Strata](https://github.com/Niko1221/Strata). Unleashed adds model selection and downloads, more quant options, mixed KV caches and auto-tuning. It can also run without MTP.
 
 ## From download to chat
 
@@ -33,8 +33,8 @@ First establish a measured VRAM budget: total memory minus automatic headroom an
 
 The first objective is generation speed on 512 input and 512 output tokens. The second is prompt processing on a longer input while retaining at least 90% of the generation baseline. Only a configuration that passes final checks is saved. This is a measured search over supported settings, not proof of a global optimum.
 
-## Why test chat has no system prompt
+## Test chat
 
-Test chat passes user/assistant turns directly through the model's chat template with thinking instructions off. It rejects templates that still insert a system turn. There are no tool descriptions, agent instructions or default assistant persona in that path. The normal chat framing remains; it is not a raw text-completion interface.
+Test chat sends your messages and the model's replies. No system prompt, tools or extra persona. It uses the model's normal chat format and turns off template-added thinking instructions. If the template still adds a system message, chat stops with an error.
 
 [Engineering note and measurements](paper/Strata-Unleashed.md) · [Original upstream paper](paper/Strata-Paper.pdf) · [Engine reference](DETAILS.md)

@@ -1,23 +1,23 @@
 # Choose and download a model
 
-Strata Unleashed includes a model picker and downloader. Open `CLI-UNLEASHED.bat` on Windows or `./cli-unleashed.sh` on Linux. Select a model, and setup downloads the complete, verified shard family for you.
+Run `CLI-UNLEASHED.bat` on Windows or `./cli-unleashed.sh` on Linux. Pick a model. Setup downloads all its files and checks them for you.
 
-## Recommended families
+## Models
 
-| Use | First choice | Why it is offered |
-| --- | --- | --- |
-| Compact/general | ISTA Flash Next | Small published Flash Next variants |
-| Coding | ISTA Flash Next Coder | Expert-pruned coding variant |
-| Larger model | Atomic Chat | Three mixed-quant Flash Next options |
-| Uncensored/abliterated | HuiHui | The requested abliterated family |
-| Other quantizations | Unsloth | Additional mixed-quant options |
+| Model | Notes |
+| --- | --- |
+| ISTA Flash Next Coder | Smallest option. Mainly for coding. |
+| ISTA Flash Next | Small general models. |
+| Atomic Chat | Larger models. The main recommendation once you have the RAM. |
+| Unsloth | Larger quants are available. Optional, not the first pick. Don't expect a big jump just from using more bits. |
+| HuiHui | Uncensored / abliterated. Pick this if that's what you want. |
 
-These are selection preferences, not a measured ranking of answer quality. The smallest fitting ISTA model is the compact default; the largest fitting Atomic option is the larger-model default. Uncensored mode recommends only HuiHui, and says when none fits.
+Start near the top if space or RAM is tight. This is a rough guide, not a quality benchmark. Check the size of the actual quant before downloading. The picker has separate small, coding, large and uncensored modes; HuiHui stays separate from the general recommendations.
 
 ## Included choices
 
+- **ISTA Coder:** IQ1_M. Not every tensor is one-bit.
 - **ISTA general:** Q2_0, IQ2_XS, IQ3_XXS, IQ3_S.
-- **ISTA Coder:** IQ1_M. Its name does not imply all tensors are one-bit.
 - **Atomic Chat:** AD-3.84bpw-IQ4_XS-M64, AD-4.27bpw-Q4_K_M-M64, AD-5.00bpw-Q5_K_M-M64.
 - **HuiHui:** BF16, Q8_0, UD-Q4_K_XL.
 - **Unsloth:** BF16, Q8_0, UD-IQ1_M, UD-IQ1_S, UD-IQ3_XXS, UD-IQ4_XS, UD-Q2_K_XL, UD-Q3_K_XL, UD-Q4_K_XL, UD-Q5_K_XL, UD-Q6_K_XL.
@@ -28,11 +28,11 @@ This is the **Qwen3.8-Flash-Next family**. Other architectures such as 27B and 2
 
 ## What “fits” means
 
-The picker checks available RAM, free disk, GPU/VRAM, context, reserved VRAM and engine/build tools. Estimates are deliberately conservative. “Not available” can mean an unsupported encoding, missing tools, or insufficient resources right now. It does not prove that another engine or a hand-configured SSD-streaming setup could never run the model.
+The picker checks available RAM, free disk, GPU/VRAM, context, reserved VRAM and engine/build tools. The estimates leave some room. “Not available” can mean an unsupported encoding, missing tools, or insufficient resources right now. Another engine or a manual setup may still run it.
 
 PLE lookup-table files are mapped from disk rather than permanently resident in RAM. The type and speed of the drive holding them can matter during inference. NVMe is preferred; a slower or unidentified drive receives a warning.
 
-## Refresh or inspect without downloading weights
+## Check the list
 
 ```bash
 ./cli-unleashed.sh --list
