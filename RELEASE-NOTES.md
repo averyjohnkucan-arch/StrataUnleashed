@@ -1,4 +1,16 @@
-# Strata Unleashed 0.1.0
+# Strata Unleashed 0.1.38
+
+## Interactive setup release
+
+Version 0.1.38 matches the current upstream engine release. New Linux `cli-unleashed.sh` and Windows `CLI-UNLEASHED.bat` entry points scan hardware, recommend models by use case, explain fit/format limits, verify resumable downloads and start procedural tuning. The ordinary launchers open the wizard when called without arguments.
+
+The pinned catalog includes 22 variants: four ISTA general, one ISTA Coder, three Atomic Chat, three HuiHui and eleven Unsloth. All shard headers were checked against the engine contract; 19 passed and three unsupported expert encodings are explicitly blocked. Full inference testing of every catalog model is not claimed.
+
+ISTA is preferred for compact/coding use, Atomic Chat for larger choices, and HuiHui for uncensored use. Recommendations account for installed and available RAM, disk, GPU, reserved VRAM, context and build tools. See [docs/UNLEASHED-CLI.md](docs/UNLEASHED-CLI.md) for estimates, exact variants and every flag. Windows hardware/tool behavior is covered by simulated unit tests; Windows execution remains unvalidated.
+
+This update passed 39 CLI/launcher/tuner regression tests, a real resumed Hugging Face download with SHA256 verification, a real Linux system scan, and read-only inspection of all 33 local Q5 shards. All 170 catalog shard headers were inspected. Details: [docs/UNLEASHED-CLI-VALIDATION.json](docs/UNLEASHED-CLI-VALIDATION.json).
+
+The inference engine and self-tuning search are unchanged from the first Unleashed release; the Q5 measurements below carry forward for that same engine.
 
 Based on upstream Strata `99f3dbd`. Local SSD changes from `Strata`, `Strata-q6` and `Strata-atomic` were integrated into the newer upstream source: Q6 expert/prefill support, shard metadata tolerance, Q8/Q5 PLE tables, MXFP4, native PLE keys and the on-demand server alias. The newer upstream lifecycle behavior is retained, with cleanup of failed or interrupted engine starts.
 

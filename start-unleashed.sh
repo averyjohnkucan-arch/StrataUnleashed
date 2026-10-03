@@ -14,4 +14,8 @@ if [[ ! -f .venv/unleashed-dependencies-v1 ]]; then
     .venv/bin/python -B -m pip install --disable-pip-version-check -r requirements-unleashed.txt
     touch .venv/unleashed-dependencies-v1
 fi
+if [[ $# -eq 0 || "${1:-}" == "--wizard" ]]; then
+    if [[ $# -gt 0 ]]; then shift; fi
+    exec .venv/bin/python -B -m tools.unleashed_wizard "$@"
+fi
 exec .venv/bin/python -B unleashed.py "$@"

@@ -1,0 +1,1504 @@
+{
+  "schema": 1,
+  "checked_utc": "2026-10-03T20:24:28.603407+00:00",
+  "models": [
+    {
+      "id": "ista/IQ2_XS",
+      "provider": "ista",
+      "title": "ISTA Flash Next",
+      "quant": "IQ2_XS",
+      "repo": "ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF",
+      "revision": "ed59f92082b1e93c0e96d60a8b11aab089b52f09",
+      "files": [
+        {
+          "path": "IQ2_XS/Qwen3.8-Flash-Next-GSQ-RCO-IQ2_XS-00001-of-00002.gguf",
+          "size": 39225954592,
+          "sha256": "92cee27ae5bbadcd732416a0f7a7f0acc092399dbbe8f5a5efa707c2ec0a49d7"
+        },
+        {
+          "path": "IQ2_XS/Qwen3.8-Flash-Next-GSQ-RCO-IQ2_XS-00002-of-00002.gguf",
+          "size": 28800138432,
+          "sha256": "316b46f3a2dbd68c900f43136ab9449f9dcc3725dfd8c794847c204bc161e113"
+        }
+      ],
+      "download_bytes": 68026093024,
+      "inspection": {
+        "compatible": true,
+        "reasons": [],
+        "expert_bytes": 35454976000,
+        "ple_bytes": 28800138240,
+        "dense_bytes": 3759953920,
+        "pack_bytes": 1538084928,
+        "expert_types": [
+          "IQ1_M",
+          "IQ2_S",
+          "IQ2_XXS",
+          "Q2_0"
+        ],
+        "ple_types": [
+          "IQ4_NL"
+        ],
+        "experts": 512,
+        "validation": "All shard headers checked; runtime quality and speed are not implied"
+      }
+    },
+    {
+      "id": "ista/IQ3_S",
+      "provider": "ista",
+      "title": "ISTA Flash Next",
+      "quant": "IQ3_S",
+      "repo": "ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF",
+      "revision": "ed59f92082b1e93c0e96d60a8b11aab089b52f09",
+      "files": [
+        {
+          "path": "IQ3_S/Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S-00001-of-00002.gguf",
+          "size": 54817524224,
+          "sha256": "4c1eb2ceb4915e1192f4f386021897bde56a97f40a0bb78bb86465e0f7d2aca3"
+        },
+        {
+          "path": "IQ3_S/Qwen3.8-Flash-Next-GSQ-RCO-IQ3_S-00002-of-00002.gguf",
+          "size": 28800138432,
+          "sha256": "316b46f3a2dbd68c900f43136ab9449f9dcc3725dfd8c794847c204bc161e113"
+        }
+      ],
+      "download_bytes": 83617662656,
+      "inspection": {
+        "compatible": true,
+        "reasons": [],
+        "expert_bytes": 50292326400,
+        "ple_bytes": 28800138240,
+        "dense_bytes": 4514173440,
+        "pack_bytes": 1538084928,
+        "expert_types": [
+          "IQ2_S",
+          "IQ3_S",
+          "IQ3_XXS",
+          "IQ4_NL",
+          "IQ4_XS",
+          "Q2_0"
+        ],
+        "ple_types": [
+          "IQ4_NL"
+        ],
+        "experts": 512,
+        "validation": "All shard headers checked; runtime quality and speed are not implied"
+      }
+    },
+    {
+      "id": "ista/IQ3_XXS",
+      "provider": "ista",
+      "title": "ISTA Flash Next",
+      "quant": "IQ3_XXS",
+      "repo": "ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF",
+      "revision": "ed59f92082b1e93c0e96d60a8b11aab089b52f09",
+      "files": [
+        {
+          "path": "IQ3_XXS/Qwen3.8-Flash-Next-GSQ-RCO-IQ3_XXS-00001-of-00002.gguf",
+          "size": 47039860096,
+          "sha256": "219ea929900dfa9ef091f3aa473fdba6874b65fcb36526d7d851ac9e95856d15"
+        },
+        {
+          "path": "IQ3_XXS/Qwen3.8-Flash-Next-GSQ-RCO-IQ3_XXS-00002-of-00002.gguf",
+          "size": 28800138432,
+          "sha256": "316b46f3a2dbd68c900f43136ab9449f9dcc3725dfd8c794847c204bc161e113"
+        }
+      ],
+      "download_bytes": 75839998528,
+      "inspection": {
+        "compatible": true,
+        "reasons": [],
+        "expert_bytes": 42912972800,
+        "ple_bytes": 28800138240,
+        "dense_bytes": 4115863040,
+        "pack_bytes": 1538084928,
+        "expert_types": [
+          "IQ2_S",
+          "IQ2_XS",
+          "IQ2_XXS",
+          "IQ3_S",
+          "IQ3_XXS",
+          "IQ4_NL",
+          "Q2_0"
+        ],
+        "ple_types": [
+          "IQ4_NL"
+        ],
+        "experts": 512,
+        "validation": "All shard headers checked; runtime quality and speed are not implied"
+      }
+    },
+    {
+      "id": "ista/Q2_0",
+      "provider": "ista",
+      "title": "ISTA Flash Next",
+      "quant": "Q2_0",
+      "repo": "ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF",
+      "revision": "ed59f92082b1e93c0e96d60a8b11aab089b52f09",
+      "files": [
+        {
+          "path": "Q2_0/Qwen3.8-Flash-Next-GSQ-RCO-Q2_0-00001-of-00002.gguf",
+          "size": 37623740192,
+          "sha256": "69820c02ec7d0b45ef2ebb19d6620299db749fe2aded7f39f93c6b88b199b720"
+        },
+        {
+          "path": "Q2_0/Qwen3.8-Flash-Next-GSQ-RCO-Q2_0-00002-of-00002.gguf",
+          "size": 28800138432,
+          "sha256": "316b46f3a2dbd68c900f43136ab9449f9dcc3725dfd8c794847c204bc161e113"
+        }
+      ],
+      "download_bytes": 66423878624,
+      "inspection": {
+        "compatible": true,
+        "reasons": [],
+        "expert_bytes": 33973862400,
+        "ple_bytes": 28800138240,
+        "dense_bytes": 3638853120,
+        "pack_bytes": 1485656064,
+        "expert_types": [
+          "Q2_0"
+        ],
+        "ple_types": [
+          "IQ4_NL"
+        ],
+        "experts": 512,
+        "validation": "All shard headers checked; runtime quality and speed are not implied"
+      }
+    },
+    {
+      "id": "ista-coder/IQ1_M",
+      "provider": "ista-coder",
+      "title": "ISTA Flash Next Coder",
+      "quant": "IQ1_M",
+      "repo": "ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-Coder-GGUF",
+      "revision": "5348543e0147355ac9cbcb031184a3546350988e",
+      "files": [
+        {
+          "path": "IQ1_M/Qwen3.8-Flash-Next-GSQ-RCO-IQ1_M-00001-of-00002.gguf",
+          "size": 29608446496,
+          "sha256": "e11083ba855e7666b48ea3f2db6a9c3a20c18751a012cc24f948de91b7087fad"
+        },
+        {
+          "path": "IQ1_M/Qwen3.8-Flash-Next-GSQ-RCO-IQ1_M-00002-of-00002.gguf",
+          "size": 28800138432,
+          "sha256": "316b46f3a2dbd68c900f43136ab9449f9dcc3725dfd8c794847c204bc161e113"
+        }
+      ],
+      "download_bytes": 58408584928,
+      "inspection": {
+        "compatible": true,
+        "reasons": [],
+        "expert_bytes": 25146163200,
+        "ple_bytes": 28800138240,
+        "dense_bytes": 4451258880,
+        "pack_bytes": 1475170368,
+        "expert_types": [
+          "IQ2_S",
+          "IQ3_S",
+          "IQ3_XXS",
+          "IQ4_NL",
+          "IQ4_XS",
+          "Q2_0"
+        ],
+        "ple_types": [
+          "IQ4_NL"
+        ],
+        "experts": 256,
+        "validation": "All shard headers checked; runtime quality and speed are not implied"
+      }
+    },
+    {
+      "id": "atomic/AD-3.84bpw-IQ4_XS-M64",
+      "provider": "atomic",
+      "title": "Atomic Chat",
+      "quant": "AD-3.84bpw-IQ4_XS-M64",
+      "repo": "AtomicChat/Qwen3.8-Flash-Next-GGUF",
+      "revision": "142262902a46f7daed19c79d0771534c8106ad59",
+      "files": [
+        {
+          "path": "Qwen3.8-Flash-Next-AD-3.84bpw-IQ4_XS-M64/Qwen3.8-Flash-Next-AD-3.84bpw-IQ4_XS-M64-00001-of-00028.gguf",
+          "size": 693380288,
+          "sha256": "7286697d1ede4318a5b40b5ef6965c4c93cb3eb8b8d5f5d415f0dd500b4677db"
+        },
+        {
+          "path": "Qwen3.8-Flash-Next-AD-3.84bpw-IQ4_XS-M64/Qwen3.8-Flash-Next-AD-3.84bpw-IQ4_XS-M64-00002-of-00028.gguf",
+          "size": 38400184512,
+          "sha256": "274cd6cca57afd7e70526667f7f1b82b474af420e63ca71a41c2ef2c2b0f0215"
+        },
+        {
+          "path": "Qwen3.8-Flash-Next-AD-3.84bpw-IQ4_XS-M64/Qwen3.8-Flash-Next-AD-3.84bpw-IQ4_XS-M64-00003-of-00028.gguf",
+          "size": 1789309632,
+          "sha256": "4d6bc919d69da86b63020883c4f0d049ef326d63fd0f70c70cc82507df71bf08"
+        },
+        {
+          "path": "Qwen3.8-Flash-Next-AD-3.84bpw-IQ4_XS-M64/Qwen3.8-Flash-Next-AD-3.84bpw-IQ4_XS-M64-00004-of-00028.gguf",
+          "size": 1827413280,
+          "sha256": "7aca08665eea51dec224c57df8c126b0f10d83f5dbea6d0a6c3cf8b59c3d1259"
+        },
+        {
+          "path": "Qwen3.8-Flash-Next-AD-3.84bpw-IQ4_XS-M64/Qwen3.8-Flash-Next-AD-3.84bpw-IQ4_XS-M64-00005-of-00028.gguf",
+          "size": 1857435520,
+          "sha256": "991d10bd5500286cd5d2ced52d9b62c3139b89f2a950ce39f96b12bc8424cf50"
+        },
+        {
+          "path": "Qwen3.8-Flash-Next-AD-3.84bpw-IQ4_XS-M64/Qwen3.8-Flash-Next-AD-3.84bpw-IQ4_XS-M64-00006-of-00028.gguf",
+          "size": 1691243296,
+          "sha256": "bf3021a73adb309f88cd680db2cd36e9f24ea0e32c406c5320ae53f6dd902009"
+        },
+        {
+          "path": "Qwen3.8-Flash-Next-AD-3.84bpw-IQ4_XS-M64/Qwen3.8-Flash-Next-AD-3.84bpw-IQ4_XS-M64-00007-of-00028.gguf",
+          "size": 1792340096,
+          "sha256": "e028b4b3eedf67fd70faa5cbb947739859de04d22d90abfa48fe9b8fe5373d9a"
+        },
+        {
+          "path": "Qwen3.8-Flash-Next-AD-3.84bpw-IQ4_XS-M64/Qwen3.8-Flash-Next-AD-3.84bpw-IQ4_XS-M64-00008-of-00028.gguf",
+          "size": 1797841824,
+          "sha256": "9a0d6930a023581b021ea06d01a1cea8e44c7fa0cd14020e471dbf2e424b35a4"
+        },
+        {
+          "path": "Qwen3.8-Flash-Next-AD-3.84bpw-IQ4_XS-M64/Qwen3.8-Flash-Next-AD-3.84bpw-IQ4_XS-M64-00009-of-00028.gguf",
+          "size": 1792340160,
+          "sha256": "ed250eeb318d45cb33b68cb89013836a71204923c984d986051dba7b5fbaa51f"
+        },
+        {
+          "path": "Qwen3.8-Flash-Next-AD-3.84bpw-IQ4_XS-M64/Qwen3.8-Flash-Next-AD-3.84bpw-IQ4_XS-M64-00010-of-00028.gguf",
+          "size": 1797841888,
+          "sha256": "65f651c0e8c14e7b99ee72a6c550c924db90c3422e782024f645384b44c9f0bc"
+        },
+        {
+          "path": "Qwen3.8-Flash-Next-AD-3.84bpw-IQ4_XS-M64/Qwen3.8-Flash-Next-AD-3.84bpw-IQ4_XS-M64-00011-of-00028.gguf",
+          "size": 1792340160,
+          "sha256": "4a1badfa4c6d8c5d12cf99111e7f5f3cbc09bff1aca1cc3eda6b0a275932a464"
+        },
+        {
+          "path": "Qwen3.8-Flash-Next-AD-3.84bpw-IQ4_XS-M64/Qwen3.8-Flash-Next-AD-3.84bpw-IQ4_XS-M64-00012-of-00028.gguf",
+          "size": 1797841888,
+          "sha256": "8a23bedfc701e09cac6ca8152f4bbf38bbc14c5558bb46b7e68532fb0af29c18"
+        },
+        {
+          "path": "Qwen3.8-Flash-Next-AD-3.84bpw-IQ4_XS-M64/Qwen3.8-Flash-Next-AD-3.84bpw-IQ4_XS-M64-00013-of-00028.gguf",
+          "size": 1792340160,
+          "sha256": "14352dec027dcee4690abe9048d83723284b497b5f8f71f5f99a95bd74359ce5"
+        },
+        {
+          "path": "Qwen3.8-Flash-Next-AD-3.84bpw-IQ4_XS-M64/Qwen3.8-Flash-Next-AD-3.84bpw-IQ4_XS-M64-00014-of-00028.gguf",
+          "size": 1797841888,
+          "sha256": "ec7ea8e9530877c42f58c8bbe211007aa4588b3d723aafed6c191b999fc0c567"
+        },
+        {
+          "path": "Qwen3.8-Flash-Next-AD-3.84bpw-IQ4_XS-M64/Qwen3.8-Flash-Next-AD-3.84bpw-IQ4_XS-M64-00015-of-00028.gguf",
+          "size": 1792340160,
+          "sha256": "561bb56e108313053d3bfcb2df8f77eef38c1aa528be4ce5e250e64b77a68bcc"
+        },
+        {
+          "path": "Qwen3.8-Flash-Next-AD-3.84bpw-IQ4_XS-M64/Qwen3.8-Flash-Next-AD-3.84bpw-IQ4_XS-M64-00016-of-00028.gguf",
+          "size": 1797841888,
+          "sha256": "6684b7bdb3d6335f27fb2039abb4dda916352f42459ff478d95e0ee218da04fd"
+        },
+        {
+          "path": "Qwen3.8-Flash-Next-AD-3.84bpw-IQ4_XS-M64/Qwen3.8-Flash-Next-AD-3.84bpw-IQ4_XS-M64-00017-of-00028.gguf",
+          "size": 1792340160,
+          "sha256": "6f5048378ef7c72b2d5d2c548859d4c8478280f7708af1158c05b43ef462aae5"
+        },
+        {
+          "path": "Qwen3.8-Flash-Next-AD-3.84bpw-IQ4_XS-M64/Qwen3.8-Flash-Next-AD-3.84bpw-IQ4_XS-M64-00018-of-00028.gguf",
+          "size": 1797841888,
+          "sha256": "2778fd9344d577ab7b18c61321af39f63615d88967b5fca64be05afa6541f1fb"
+        },
+        {
+          "path": "Qwen3.8-Flash-Next-AD-3.84bpw-IQ4_XS-M64/Qwen3.8-Flash-Next-AD-3.84bpw-IQ4_XS-M64-00019-of-00028.gguf",
+          "size": 1792340160,
+          "sha256": "5aef1bec6fdde6974fcbeffe90c347e1bdbce4ca14ebbf2172f3299a6fb0274a"
+        },
+        {
+          "path": "Qwen3.8-Flash-Next-AD-3.84bpw-IQ4_XS-M64/Qwen3.8-Flash-Next-AD-3.84bpw-IQ4_XS-M64-00020-of-00028.gguf",
+          "size": 1797841888,
+          "sha256": "a1c27c434fed2c267639ff702882e1e6fe9bdffa4278dbb3afa40141aaf41ad0"
+        },
+        {
+          "path": "Qwen3.8-Flash-Next-AD-3.84bpw-IQ4_XS-M64/Qwen3.8-Flash-Next-AD-3.84bpw-IQ4_XS-M64-00021-of-00028.gguf",
+          "size": 1792340160,
+          "sha256": "e11548204267c697eeab804d37c8f199dec1fc38409f71577a4d4b0df4d0e898"
+        },
+        {
+          "path": "Qwen3.8-Flash-Next-AD-3.84bpw-IQ4_XS-M64/Qwen3.8-Flash-Next-AD-3.84bpw-IQ4_XS-M64-00022-of-00028.gguf",
+          "size": 1797841888,
+          "sha256": "d133a2ad98ac6ba3028a141b5eb982d29f0b44e8313a73442356709ce14b91ee"
+        },
+        {
+          "path": "Qwen3.8-Flash-Next-AD-3.84bpw-IQ4_XS-M64/Qwen3.8-Flash-Next-AD-3.84bpw-IQ4_XS-M64-00023-of-00028.gguf",
+          "size": 1792340160,
+          "sha256": "c686dc13781aee7aa26a24edbd2c95a34edd8f6ca8acd1dfc6aa95a884febbfd"
+        },
+        {
+          "path": "Qwen3.8-Flash-Next-AD-3.84bpw-IQ4_XS-M64/Qwen3.8-Flash-Next-AD-3.84bpw-IQ4_XS-M64-00024-of-00028.gguf",
+          "size": 1797841888,
+          "sha256": "c19ccf4960140ece9a0340de2960f1b9b15640704cce0c417beae2e48a74b55b"
+        },
+        {
+          "path": "Qwen3.8-Flash-Next-AD-3.84bpw-IQ4_XS-M64/Qwen3.8-Flash-Next-AD-3.84bpw-IQ4_XS-M64-00025-of-00028.gguf",
+          "size": 1800750272,
+          "sha256": "ef779140eff7b9ea76066518c3ac391b37cf419a0dd718dcf30b6d8b66be985d"
+        },
+        {
+          "path": "Qwen3.8-Flash-Next-AD-3.84bpw-IQ4_XS-M64/Qwen3.8-Flash-Next-AD-3.84bpw-IQ4_XS-M64-00026-of-00028.gguf",
+          "size": 1849077440,
+          "sha256": "c0bf8662c413f1929b1649b1fb79fb7effb9024a0102e221b1346829252ff7fc"
+        },
+        {
+          "path": "Qwen3.8-Flash-Next-AD-3.84bpw-IQ4_XS-M64/Qwen3.8-Flash-Next-AD-3.84bpw-IQ4_XS-M64-00027-of-00028.gguf",
+          "size": 1699601472,
+          "sha256": "6f92b6a12706d645e8facd2879a30db89758c597b0ebc6e3d947116a8568eb4d"
+        },
+        {
+          "path": "Qwen3.8-Flash-Next-AD-3.84bpw-IQ4_XS-M64/Qwen3.8-Flash-Next-AD-3.84bpw-IQ4_XS-M64-00028-of-00028.gguf",
+          "size": 1010890144,
+          "sha256": "d2775f8a64a4db1a6b5b3bf151bea713a21b3bf89068b5c30fa67658364b1cd0"
+        }
+      ],
+      "download_bytes": 84930924160,
+      "inspection": {
+        "compatible": true,
+        "reasons": [],
+        "expert_bytes": 41051750400,
+        "ple_bytes": 38400184320,
+        "dense_bytes": 5955980800,
+        "pack_bytes": 1485656064,
+        "expert_types": [
+          "IQ1_M",
+          "IQ2_S",
+          "MXFP4"
+        ],
+        "ple_types": [
+          "Q5_1"
+        ],
+        "experts": 512,
+        "validation": "All shard headers checked; runtime quality and speed are not implied"
+      }
+    },
+    {
+      "id": "atomic/AD-4.27bpw-Q4_K_M-M64",
+      "provider": "atomic",
+      "title": "Atomic Chat",
+      "quant": "AD-4.27bpw-Q4_K_M-M64",
+      "repo": "AtomicChat/Qwen3.8-Flash-Next-GGUF",
+      "revision": "142262902a46f7daed19c79d0771534c8106ad59",
+      "files": [
+        {
+          "path": "Qwen3.8-Flash-Next-AD-4.27bpw-Q4_K_M-M64/Qwen3.8-Flash-Next-AD-4.27bpw-Q4_K_M-M64-00001-of-00033.gguf",
+          "size": 693380288,
+          "sha256": "d74620aad612239711e0947f58d2614fa8f47335fb01f23e47b24a3315c3e730"
+        },
+        {
+          "path": "Qwen3.8-Flash-Next-AD-4.27bpw-Q4_K_M-M64/Qwen3.8-Flash-Next-AD-4.27bpw-Q4_K_M-M64-00002-of-00033.gguf",
+          "size": 38400184512,
+          "sha256": "77edf6523f6abbd7ba6a78aa1ef4a658dfaca544f9c5f46cf0efd0b0ff00bef0"
+        },
+        {
+          "path": "Qwen3.8-Flash-Next-AD-4.27bpw-Q4_K_M-M64/Qwen3.8-Flash-Next-AD-4.27bpw-Q4_K_M-M64-00003-of-00033.gguf",
+          "size": 1999024832,
+          "sha256": "50a95250ea2cfb5b9359bfbf37e8334959266c38777c134e1c7082c4a668f59d"
+        },
+        {
+          "path": "Qwen3.8-Flash-Next-AD-4.27bpw-Q4_K_M-M64/Qwen3.8-Flash-Next-AD-4.27bpw-Q4_K_M-M64-00004-of-00033.gguf",
+          "size": 1787651072,
+          "sha256": "0a32371569fd1564e82be13301a872847d00dce450db7c7f930f6978c0bccd6d"
+        },
+        {
+          "path": "Qwen3.8-Flash-Next-AD-4.27bpw-Q4_K_M-M64/Qwen3.8-Flash-Next-AD-4.27bpw-Q4_K_M-M64-00005-of-00033.gguf",
+          "size": 1654830080,
+          "sha256": "d545285f60dd11a2dfc46388a86af7ecb4c1bbdd86ac5364bb860ad3eefca8a4"
+        },
+        {
+          "path": "Qwen3.8-Flash-Next-AD-4.27bpw-Q4_K_M-M64/Qwen3.8-Flash-Next-AD-4.27bpw-Q4_K_M-M64-00006-of-00033.gguf",
+          "size": 1993256608,
+          "sha256": "64aacb4a86cc92a5a48f19619393f22af9b1a17d1c2dfbaded21bf936553994d"
+        },
+        {
+          "path": "Qwen3.8-Flash-Next-AD-4.27bpw-Q4_K_M-M64/Qwen3.8-Flash-Next-AD-4.27bpw-Q4_K_M-M64-00007-of-00033.gguf",
+          "size": 1725815808,
+          "sha256": "7cfd22c0de5dda2500643b9e13ef9c4aea338968ca29c1786226b325bc5948c6"
+        },
+        {
+          "path": "Qwen3.8-Flash-Next-AD-4.27bpw-Q4_K_M-M64/Qwen3.8-Flash-Next-AD-4.27bpw-Q4_K_M-M64-00008-of-00033.gguf",
+          "size": 1830961056,
+          "sha256": "408457d6a65f632b62ebec099112fb106ed1c1d3d5bc2bd9e189004bad9af550"
+        },
+        {
+          "path": "Qwen3.8-Flash-Next-AD-4.27bpw-Q4_K_M-M64/Qwen3.8-Flash-Next-AD-4.27bpw-Q4_K_M-M64-00009-of-00033.gguf",
+          "size": 1915366048,
+          "sha256": "c1f962654057e9a4f71af34ccada5d242af62a5c915b0694a0a152b30b24ba99"
+        },
+        {
+          "path": "Qwen3.8-Flash-Next-AD-4.27bpw-Q4_K_M-M64/Qwen3.8-Flash-Next-AD-4.27bpw-Q4_K_M-M64-00010-of-00033.gguf",
+          "size": 1711956000,
+          "sha256": "b85555c695efc1bd6852d005bd20931882b54c2d0f48a0912f846fe5e252b697"
+        },
+        {
+          "path": "Qwen3.8-Flash-Next-AD-4.27bpw-Q4_K_M-M64/Qwen3.8-Flash-Next-AD-4.27bpw-Q4_K_M-M64-00011-of-00033.gguf",
+          "size": 1844820928,
+          "sha256": "e5cb081065b8721583ddc29f5f71f5acb1d537c2d2a3bd8bc18e03d4340d2e43"
+        },
+        {
+          "path": "Qwen3.8-Flash-Next-AD-4.27bpw-Q4_K_M-M64/Qwen3.8-Flash-Next-AD-4.27bpw-Q4_K_M-M64-00012-of-00033.gguf",
+          "size": 1923724224,
+          "sha256": "cc9cb8624556958f65b9763c918ee077542e3d0cc1f6a81a647b2987860f1243"
+        },
+        {
+          "path": "Qwen3.8-Flash-Next-AD-4.27bpw-Q4_K_M-M64/Qwen3.8-Flash-Next-AD-4.27bpw-Q4_K_M-M64-00013-of-00033.gguf",
+          "size": 1703597888,
+          "sha256": "cd4abb2dc631a08f9b3885597f77bc24d1b1d9acd4662cafc17ebfb8e0b8959e"
+        },
+        {
+          "path": "Qwen3.8-Flash-Next-AD-4.27bpw-Q4_K_M-M64/Qwen3.8-Flash-Next-AD-4.27bpw-Q4_K_M-M64-00014-of-00033.gguf",
+          "size": 1844820928,
+          "sha256": "b14050af3b53ee789575a2a8159cb1524a2160a8b251e97fd367f2c0ffcf73d3"
+        },
+        {
+          "path": "Qwen3.8-Flash-Next-AD-4.27bpw-Q4_K_M-M64/Qwen3.8-Flash-Next-AD-4.27bpw-Q4_K_M-M64-00015-of-00033.gguf",
+          "size": 1909864352,
+          "sha256": "d6066a9799e1640b2609fa9c28b19d33ce1441c4737de11d3eb8e283d494c61f"
+        },
+        {
+          "path": "Qwen3.8-Flash-Next-AD-4.27bpw-Q4_K_M-M64/Qwen3.8-Flash-Next-AD-4.27bpw-Q4_K_M-M64-00016-of-00033.gguf",
+          "size": 1717457728,
+          "sha256": "76c95f5229b461e6c648f536a714457913fab50fb2608ffa64ec10ddbf8eabed"
+        },
+        {
+          "path": "Qwen3.8-Flash-Next-AD-4.27bpw-Q4_K_M-M64/Qwen3.8-Flash-Next-AD-4.27bpw-Q4_K_M-M64-00017-of-00033.gguf",
+          "size": 1853179072,
+          "sha256": "5a9428ca9bab16c1ada3b43bc98b60d3a884f7bded0aa9b468fb66dd6c36e68b"
+        },
+        {
+          "path": "Qwen3.8-Flash-Next-AD-4.27bpw-Q4_K_M-M64/Qwen3.8-Flash-Next-AD-4.27bpw-Q4_K_M-M64-00018-of-00033.gguf",
+          "size": 1901506240,
+          "sha256": "d4ad15dfa433fc1d0d09112bb175512321d41fe60a651b720e1c104cdd2c8f97"
+        },
+        {
+          "path": "Qwen3.8-Flash-Next-AD-4.27bpw-Q4_K_M-M64/Qwen3.8-Flash-Next-AD-4.27bpw-Q4_K_M-M64-00019-of-00033.gguf",
+          "size": 1725815872,
+          "sha256": "6ba1501407c639a126e74f483bfa4073da42ea24abecd251a7d560a0810855ba"
+        },
+        {
+          "path": "Qwen3.8-Flash-Next-AD-4.27bpw-Q4_K_M-M64/Qwen3.8-Flash-Next-AD-4.27bpw-Q4_K_M-M64-00020-of-00033.gguf",
+          "size": 1830961088,
+          "sha256": "96fc276c556886d19af5d1514876c59ad7d37005e99c329f35e4d4418515219b"
+        },
+        {
+          "path": "Qwen3.8-Flash-Next-AD-4.27bpw-Q4_K_M-M64/Qwen3.8-Flash-Next-AD-4.27bpw-Q4_K_M-M64-00021-of-00033.gguf",
+          "size": 1915366080,
+          "sha256": "f3c46604b832c24201c1d4d6ac22830ec729830f66e7bb91a2f8895ec41d62f9"
+        },
+        {
+          "path": "Qwen3.8-Flash-Next-AD-4.27bpw-Q4_K_M-M64/Qwen3.8-Flash-Next-AD-4.27bpw-Q4_K_M-M64-00022-of-00033.gguf",
+          "size": 1711956000,
+          "sha256": "5ae92fbdd717a4246620608a441571fd041dfb2a4bd20d969a8f6c8cd411b734"
+        },
+        {
+          "path": "Qwen3.8-Flash-Next-AD-4.27bpw-Q4_K_M-M64/Qwen3.8-Flash-Next-AD-4.27bpw-Q4_K_M-M64-00023-of-00033.gguf",
+          "size": 1844820928,
+          "sha256": "59bc05521ea68a8b6ff4b78fd275a0da975270384db05f2fbc62fbb901f28b15"
+        },
+        {
+          "path": "Qwen3.8-Flash-Next-AD-4.27bpw-Q4_K_M-M64/Qwen3.8-Flash-Next-AD-4.27bpw-Q4_K_M-M64-00024-of-00033.gguf",
+          "size": 1923724224,
+          "sha256": "14216d45769bc6ffec284e1be54ef9b200081fb528b97653ccaeedad896a5396"
+        },
+        {
+          "path": "Qwen3.8-Flash-Next-AD-4.27bpw-Q4_K_M-M64/Qwen3.8-Flash-Next-AD-4.27bpw-Q4_K_M-M64-00025-of-00033.gguf",
+          "size": 1703597888,
+          "sha256": "94bd0311975222d1c62f47fa6cde17bb56ad6f98c47c42c888a19e7d57b704af"
+        },
+        {
+          "path": "Qwen3.8-Flash-Next-AD-4.27bpw-Q4_K_M-M64/Qwen3.8-Flash-Next-AD-4.27bpw-Q4_K_M-M64-00026-of-00033.gguf",
+          "size": 1844820928,
+          "sha256": "b69a8f3b9896f7c0c1b75778d833ef8b0a3aa6d2df587444741a172a39f49c1f"
+        },
+        {
+          "path": "Qwen3.8-Flash-Next-AD-4.27bpw-Q4_K_M-M64/Qwen3.8-Flash-Next-AD-4.27bpw-Q4_K_M-M64-00027-of-00033.gguf",
+          "size": 1909864352,
+          "sha256": "35c3703530a17fcf42b8dbe8a582a3fe1be6e5d58885460fd46fd614585bec8b"
+        },
+        {
+          "path": "Qwen3.8-Flash-Next-AD-4.27bpw-Q4_K_M-M64/Qwen3.8-Flash-Next-AD-4.27bpw-Q4_K_M-M64-00028-of-00033.gguf",
+          "size": 1646472000,
+          "sha256": "8d01bec24d38b8876c8a011e04ccfca22584d9f86ea24c13e7e7b07a781cfbba"
+        },
+        {
+          "path": "Qwen3.8-Flash-Next-AD-4.27bpw-Q4_K_M-M64/Qwen3.8-Flash-Next-AD-4.27bpw-Q4_K_M-M64-00029-of-00033.gguf",
+          "size": 1725375264,
+          "sha256": "2b266e2d2a7f610d0a3de55a626e2f9029594c383074240d29c383a8f70e1064"
+        },
+        {
+          "path": "Qwen3.8-Flash-Next-AD-4.27bpw-Q4_K_M-M64/Qwen3.8-Flash-Next-AD-4.27bpw-Q4_K_M-M64-00030-of-00033.gguf",
+          "size": 1738770080,
+          "sha256": "36af1ca74bbf2bd4d79ac78b61a9f5d24e5ca9aac33d298bfbed7d9dbbe86c69"
+        },
+        {
+          "path": "Qwen3.8-Flash-Next-AD-4.27bpw-Q4_K_M-M64/Qwen3.8-Flash-Next-AD-4.27bpw-Q4_K_M-M64-00031-of-00033.gguf",
+          "size": 1646472000,
+          "sha256": "2cf675a6d3df1ff2eb018323c7e64ab14cd650eb38f954e948df27501822fdc1"
+        },
+        {
+          "path": "Qwen3.8-Flash-Next-AD-4.27bpw-Q4_K_M-M64/Qwen3.8-Flash-Next-AD-4.27bpw-Q4_K_M-M64-00032-of-00033.gguf",
+          "size": 1725375264,
+          "sha256": "59c5ab585958f86cecbd812a9ae34f1475d98ffff235d27734964fb53d8b4951"
+        },
+        {
+          "path": "Qwen3.8-Flash-Next-AD-4.27bpw-Q4_K_M-M64/Qwen3.8-Flash-Next-AD-4.27bpw-Q4_K_M-M64-00033-of-00033.gguf",
+          "size": 1220605344,
+          "sha256": "0a7311b24f8636f5b7c0f0dca4f6275ec6b45e326a5eb7400410ca4e32c269c2"
+        }
+      ],
+      "download_bytes": 94525394976,
+      "inspection": {
+        "compatible": true,
+        "reasons": [],
+        "expert_bytes": 50646220800,
+        "ple_bytes": 38400184320,
+        "dense_bytes": 5955980800,
+        "pack_bytes": 1485656064,
+        "expert_types": [
+          "IQ2_S",
+          "IQ3_S",
+          "IQ4_NL"
+        ],
+        "ple_types": [
+          "Q5_1"
+        ],
+        "experts": 512,
+        "validation": "All shard headers checked; runtime quality and speed are not implied"
+      }
+    },
+    {
+      "id": "atomic/AD-5.00bpw-Q5_K_M-M64",
+      "provider": "atomic",
+      "title": "Atomic Chat",
+      "quant": "AD-5.00bpw-Q5_K_M-M64",
+      "repo": "AtomicChat/Qwen3.8-Flash-Next-GGUF",
+      "revision": "142262902a46f7daed19c79d0771534c8106ad59",
+      "files": [
+        {
+          "path": "Qwen3.8-Flash-Next-AD-5.00bpw-Q5_K_M-M64/Qwen3.8-Flash-Next-AD-5.00bpw-Q5_K_M-M64-00001-of-00033.gguf",
+          "size": 693380288,
+          "sha256": "3e240ffa9bfe9b12ccff7af6ddf1065ebaf581e6c118e3cd88de5651ee15ca4a"
+        },
+        {
+          "path": "Qwen3.8-Flash-Next-AD-5.00bpw-Q5_K_M-M64/Qwen3.8-Flash-Next-AD-5.00bpw-Q5_K_M-M64-00002-of-00033.gguf",
+          "size": 54400261312,
+          "sha256": "51d8ccf25aec4cea179432a4ce6393a8fd1f56f3b936f332b1c096b67adac275"
+        },
+        {
+          "path": "Qwen3.8-Flash-Next-AD-5.00bpw-Q5_K_M-M64/Qwen3.8-Flash-Next-AD-5.00bpw-Q5_K_M-M64-00003-of-00033.gguf",
+          "size": 1999024832,
+          "sha256": "50a95250ea2cfb5b9359bfbf37e8334959266c38777c134e1c7082c4a668f59d"
+        },
+        {
+          "path": "Qwen3.8-Flash-Next-AD-5.00bpw-Q5_K_M-M64/Qwen3.8-Flash-Next-AD-5.00bpw-Q5_K_M-M64-00004-of-00033.gguf",
+          "size": 1787651072,
+          "sha256": "0a32371569fd1564e82be13301a872847d00dce450db7c7f930f6978c0bccd6d"
+        },
+        {
+          "path": "Qwen3.8-Flash-Next-AD-5.00bpw-Q5_K_M-M64/Qwen3.8-Flash-Next-AD-5.00bpw-Q5_K_M-M64-00005-of-00033.gguf",
+          "size": 1654830080,
+          "sha256": "d545285f60dd11a2dfc46388a86af7ecb4c1bbdd86ac5364bb860ad3eefca8a4"
+        },
+        {
+          "path": "Qwen3.8-Flash-Next-AD-5.00bpw-Q5_K_M-M64/Qwen3.8-Flash-Next-AD-5.00bpw-Q5_K_M-M64-00006-of-00033.gguf",
+          "size": 1993256608,
+          "sha256": "64aacb4a86cc92a5a48f19619393f22af9b1a17d1c2dfbaded21bf936553994d"
+        },
+        {
+          "path": "Qwen3.8-Flash-Next-AD-5.00bpw-Q5_K_M-M64/Qwen3.8-Flash-Next-AD-5.00bpw-Q5_K_M-M64-00007-of-00033.gguf",
+          "size": 1725815808,
+          "sha256": "7cfd22c0de5dda2500643b9e13ef9c4aea338968ca29c1786226b325bc5948c6"
+        },
+        {
+          "path": "Qwen3.8-Flash-Next-AD-5.00bpw-Q5_K_M-M64/Qwen3.8-Flash-Next-AD-5.00bpw-Q5_K_M-M64-00008-of-00033.gguf",
+          "size": 1830961056,
+          "sha256": "408457d6a65f632b62ebec099112fb106ed1c1d3d5bc2bd9e189004bad9af550"
+        },
+        {
+          "path": "Qwen3.8-Flash-Next-AD-5.00bpw-Q5_K_M-M64/Qwen3.8-Flash-Next-AD-5.00bpw-Q5_K_M-M64-00009-of-00033.gguf",
+          "size": 1915366048,
+          "sha256": "c1f962654057e9a4f71af34ccada5d242af62a5c915b0694a0a152b30b24ba99"
+        },
+        {
+          "path": "Qwen3.8-Flash-Next-AD-5.00bpw-Q5_K_M-M64/Qwen3.8-Flash-Next-AD-5.00bpw-Q5_K_M-M64-00010-of-00033.gguf",
+          "size": 1711956000,
+          "sha256": "b85555c695efc1bd6852d005bd20931882b54c2d0f48a0912f846fe5e252b697"
+        },
+        {
+          "path": "Qwen3.8-Flash-Next-AD-5.00bpw-Q5_K_M-M64/Qwen3.8-Flash-Next-AD-5.00bpw-Q5_K_M-M64-00011-of-00033.gguf",
+          "size": 1844820928,
+          "sha256": "e5cb081065b8721583ddc29f5f71f5acb1d537c2d2a3bd8bc18e03d4340d2e43"
+        },
+        {
+          "path": "Qwen3.8-Flash-Next-AD-5.00bpw-Q5_K_M-M64/Qwen3.8-Flash-Next-AD-5.00bpw-Q5_K_M-M64-00012-of-00033.gguf",
+          "size": 1923724224,
+          "sha256": "cc9cb8624556958f65b9763c918ee077542e3d0cc1f6a81a647b2987860f1243"
+        },
+        {
+          "path": "Qwen3.8-Flash-Next-AD-5.00bpw-Q5_K_M-M64/Qwen3.8-Flash-Next-AD-5.00bpw-Q5_K_M-M64-00013-of-00033.gguf",
+          "size": 1703597888,
+          "sha256": "cd4abb2dc631a08f9b3885597f77bc24d1b1d9acd4662cafc17ebfb8e0b8959e"
+        },
+        {
+          "path": "Qwen3.8-Flash-Next-AD-5.00bpw-Q5_K_M-M64/Qwen3.8-Flash-Next-AD-5.00bpw-Q5_K_M-M64-00014-of-00033.gguf",
+          "size": 1844820928,
+          "sha256": "b14050af3b53ee789575a2a8159cb1524a2160a8b251e97fd367f2c0ffcf73d3"
+        },
+        {
+          "path": "Qwen3.8-Flash-Next-AD-5.00bpw-Q5_K_M-M64/Qwen3.8-Flash-Next-AD-5.00bpw-Q5_K_M-M64-00015-of-00033.gguf",
+          "size": 1909864352,
+          "sha256": "d6066a9799e1640b2609fa9c28b19d33ce1441c4737de11d3eb8e283d494c61f"
+        },
+        {
+          "path": "Qwen3.8-Flash-Next-AD-5.00bpw-Q5_K_M-M64/Qwen3.8-Flash-Next-AD-5.00bpw-Q5_K_M-M64-00016-of-00033.gguf",
+          "size": 1717457728,
+          "sha256": "76c95f5229b461e6c648f536a714457913fab50fb2608ffa64ec10ddbf8eabed"
+        },
+        {
+          "path": "Qwen3.8-Flash-Next-AD-5.00bpw-Q5_K_M-M64/Qwen3.8-Flash-Next-AD-5.00bpw-Q5_K_M-M64-00017-of-00033.gguf",
+          "size": 1853179072,
+          "sha256": "5a9428ca9bab16c1ada3b43bc98b60d3a884f7bded0aa9b468fb66dd6c36e68b"
+        },
+        {
+          "path": "Qwen3.8-Flash-Next-AD-5.00bpw-Q5_K_M-M64/Qwen3.8-Flash-Next-AD-5.00bpw-Q5_K_M-M64-00018-of-00033.gguf",
+          "size": 1901506240,
+          "sha256": "d4ad15dfa433fc1d0d09112bb175512321d41fe60a651b720e1c104cdd2c8f97"
+        },
+        {
+          "path": "Qwen3.8-Flash-Next-AD-5.00bpw-Q5_K_M-M64/Qwen3.8-Flash-Next-AD-5.00bpw-Q5_K_M-M64-00019-of-00033.gguf",
+          "size": 1725815872,
+          "sha256": "6ba1501407c639a126e74f483bfa4073da42ea24abecd251a7d560a0810855ba"
+        },
+        {
+          "path": "Qwen3.8-Flash-Next-AD-5.00bpw-Q5_K_M-M64/Qwen3.8-Flash-Next-AD-5.00bpw-Q5_K_M-M64-00020-of-00033.gguf",
+          "size": 1830961088,
+          "sha256": "96fc276c556886d19af5d1514876c59ad7d37005e99c329f35e4d4418515219b"
+        },
+        {
+          "path": "Qwen3.8-Flash-Next-AD-5.00bpw-Q5_K_M-M64/Qwen3.8-Flash-Next-AD-5.00bpw-Q5_K_M-M64-00021-of-00033.gguf",
+          "size": 1915366080,
+          "sha256": "f3c46604b832c24201c1d4d6ac22830ec729830f66e7bb91a2f8895ec41d62f9"
+        },
+        {
+          "path": "Qwen3.8-Flash-Next-AD-5.00bpw-Q5_K_M-M64/Qwen3.8-Flash-Next-AD-5.00bpw-Q5_K_M-M64-00022-of-00033.gguf",
+          "size": 1711956000,
+          "sha256": "5ae92fbdd717a4246620608a441571fd041dfb2a4bd20d969a8f6c8cd411b734"
+        },
+        {
+          "path": "Qwen3.8-Flash-Next-AD-5.00bpw-Q5_K_M-M64/Qwen3.8-Flash-Next-AD-5.00bpw-Q5_K_M-M64-00023-of-00033.gguf",
+          "size": 1844820928,
+          "sha256": "59bc05521ea68a8b6ff4b78fd275a0da975270384db05f2fbc62fbb901f28b15"
+        },
+        {
+          "path": "Qwen3.8-Flash-Next-AD-5.00bpw-Q5_K_M-M64/Qwen3.8-Flash-Next-AD-5.00bpw-Q5_K_M-M64-00024-of-00033.gguf",
+          "size": 1923724224,
+          "sha256": "14216d45769bc6ffec284e1be54ef9b200081fb528b97653ccaeedad896a5396"
+        },
+        {
+          "path": "Qwen3.8-Flash-Next-AD-5.00bpw-Q5_K_M-M64/Qwen3.8-Flash-Next-AD-5.00bpw-Q5_K_M-M64-00025-of-00033.gguf",
+          "size": 1703597888,
+          "sha256": "94bd0311975222d1c62f47fa6cde17bb56ad6f98c47c42c888a19e7d57b704af"
+        },
+        {
+          "path": "Qwen3.8-Flash-Next-AD-5.00bpw-Q5_K_M-M64/Qwen3.8-Flash-Next-AD-5.00bpw-Q5_K_M-M64-00026-of-00033.gguf",
+          "size": 1844820928,
+          "sha256": "b69a8f3b9896f7c0c1b75778d833ef8b0a3aa6d2df587444741a172a39f49c1f"
+        },
+        {
+          "path": "Qwen3.8-Flash-Next-AD-5.00bpw-Q5_K_M-M64/Qwen3.8-Flash-Next-AD-5.00bpw-Q5_K_M-M64-00027-of-00033.gguf",
+          "size": 1909864352,
+          "sha256": "35c3703530a17fcf42b8dbe8a582a3fe1be6e5d58885460fd46fd614585bec8b"
+        },
+        {
+          "path": "Qwen3.8-Flash-Next-AD-5.00bpw-Q5_K_M-M64/Qwen3.8-Flash-Next-AD-5.00bpw-Q5_K_M-M64-00028-of-00033.gguf",
+          "size": 1646472000,
+          "sha256": "8d01bec24d38b8876c8a011e04ccfca22584d9f86ea24c13e7e7b07a781cfbba"
+        },
+        {
+          "path": "Qwen3.8-Flash-Next-AD-5.00bpw-Q5_K_M-M64/Qwen3.8-Flash-Next-AD-5.00bpw-Q5_K_M-M64-00029-of-00033.gguf",
+          "size": 1725375264,
+          "sha256": "2b266e2d2a7f610d0a3de55a626e2f9029594c383074240d29c383a8f70e1064"
+        },
+        {
+          "path": "Qwen3.8-Flash-Next-AD-5.00bpw-Q5_K_M-M64/Qwen3.8-Flash-Next-AD-5.00bpw-Q5_K_M-M64-00030-of-00033.gguf",
+          "size": 1738770080,
+          "sha256": "36af1ca74bbf2bd4d79ac78b61a9f5d24e5ca9aac33d298bfbed7d9dbbe86c69"
+        },
+        {
+          "path": "Qwen3.8-Flash-Next-AD-5.00bpw-Q5_K_M-M64/Qwen3.8-Flash-Next-AD-5.00bpw-Q5_K_M-M64-00031-of-00033.gguf",
+          "size": 1646472000,
+          "sha256": "2cf675a6d3df1ff2eb018323c7e64ab14cd650eb38f954e948df27501822fdc1"
+        },
+        {
+          "path": "Qwen3.8-Flash-Next-AD-5.00bpw-Q5_K_M-M64/Qwen3.8-Flash-Next-AD-5.00bpw-Q5_K_M-M64-00032-of-00033.gguf",
+          "size": 1725375264,
+          "sha256": "59c5ab585958f86cecbd812a9ae34f1475d98ffff235d27734964fb53d8b4951"
+        },
+        {
+          "path": "Qwen3.8-Flash-Next-AD-5.00bpw-Q5_K_M-M64/Qwen3.8-Flash-Next-AD-5.00bpw-Q5_K_M-M64-00033-of-00033.gguf",
+          "size": 1220605344,
+          "sha256": "0a7311b24f8636f5b7c0f0dca4f6275ec6b45e326a5eb7400410ca4e32c269c2"
+        }
+      ],
+      "download_bytes": 110525471776,
+      "inspection": {
+        "compatible": true,
+        "reasons": [],
+        "expert_bytes": 50646220800,
+        "ple_bytes": 54400261120,
+        "dense_bytes": 5955980800,
+        "pack_bytes": 1485656064,
+        "expert_types": [
+          "IQ2_S",
+          "IQ3_S",
+          "IQ4_NL"
+        ],
+        "ple_types": [
+          "Q8_0"
+        ],
+        "experts": 512,
+        "validation": "All shard headers checked; runtime quality and speed are not implied"
+      }
+    },
+    {
+      "id": "huihui/BF16",
+      "provider": "huihui",
+      "title": "HuiHui uncensored / abliterated",
+      "quant": "BF16",
+      "repo": "huihui-ai/Huihui-Qwen3.8-Flash-Next-abliterated-GGUF",
+      "revision": "73e9eb7c69fdbf667def63e233e70845e7d5ac0b",
+      "files": [
+        {
+          "path": "BF16/Qwen3.8-Flash-Next-BF16-00001-of-00008.gguf",
+          "size": 10946368,
+          "sha256": "348986b2568af284eb16a0be0ccd17aa4cf0bc823de4a1c9da8e5a24365e3fd9"
+        },
+        {
+          "path": "BF16/Qwen3.8-Flash-Next-BF16-00002-of-00008.gguf",
+          "size": 10447201728,
+          "sha256": "89beb18bde61fbc2fd9fde7e5a4f3d33f9edba9de471b21284f39f43bc96b3fd"
+        },
+        {
+          "path": "BF16/Qwen3.8-Flash-Next-BF16-00003-of-00008.gguf",
+          "size": 102400491744,
+          "sha256": "3379902dd2c81acddb91a30871d8630eea6da3638870374446d73eb67dd1a0fb"
+        },
+        {
+          "path": "BF16/Qwen3.8-Flash-Next-BF16-00004-of-00008.gguf",
+          "size": 48394236704,
+          "sha256": "5566c91734d78925c7a5a474882e6bc7fb3ae5aa445baaf3afc752a66001c7f1"
+        },
+        {
+          "path": "BF16/Qwen3.8-Flash-Next-BF16-00005-of-00008.gguf",
+          "size": 48367899104,
+          "sha256": "49213e4a1b3d944c61abf34622fbec1c405297798cac846b1c8137876665c0a5"
+        },
+        {
+          "path": "BF16/Qwen3.8-Flash-Next-BF16-00006-of-00008.gguf",
+          "size": 48615234016,
+          "sha256": "659146215cebb639c925b28c8113c2e0322f52c080086f83b0a67e1803d8fd28"
+        },
+        {
+          "path": "BF16/Qwen3.8-Flash-Next-BF16-00007-of-00008.gguf",
+          "size": 48367899104,
+          "sha256": "5b1f37058d979b302f0554d5b2aafdcfae0d3f5d7beef2c3d5214fbd8ef32f26"
+        },
+        {
+          "path": "BF16/Qwen3.8-Flash-Next-BF16-00008-of-00008.gguf",
+          "size": 47426022080,
+          "sha256": "99f71ccd504fb8b704c2e70ff2c39829ca0171bd0368a2047f62b5b547cc8830"
+        }
+      ],
+      "download_bytes": 354029930848,
+      "inspection": {
+        "compatible": false,
+        "reasons": [
+          "Unsupported expert encoding: BF16"
+        ],
+        "expert_bytes": 241591910400,
+        "ple_bytes": 102400491520,
+        "dense_bytes": 9900428800,
+        "pack_bytes": 9900497856,
+        "expert_types": [
+          "BF16"
+        ],
+        "ple_types": [
+          "BF16"
+        ],
+        "experts": 512,
+        "validation": "All shard headers checked; runtime quality and speed are not implied"
+      }
+    },
+    {
+      "id": "huihui/Q8_0",
+      "provider": "huihui",
+      "title": "HuiHui uncensored / abliterated",
+      "quant": "Q8_0",
+      "repo": "huihui-ai/Huihui-Qwen3.8-Flash-Next-abliterated-GGUF",
+      "revision": "73e9eb7c69fdbf667def63e233e70845e7d5ac0b",
+      "files": [
+        {
+          "path": "Q8_0/Qwen3.8-Flash-Next-Q8_0-00001-of-00006.gguf",
+          "size": 10946624,
+          "sha256": "2dabcbb53ca537a7947bc7d20414fd464eeaf4d66d43021b5b2556cc87544ad2"
+        },
+        {
+          "path": "Q8_0/Qwen3.8-Flash-Next-Q8_0-00002-of-00006.gguf",
+          "size": 682434944,
+          "sha256": "df11d036f89c9f04865b8f1785db1a705ad401088517a6000d24483b7799626f"
+        },
+        {
+          "path": "Q8_0/Qwen3.8-Flash-Next-Q8_0-00003-of-00006.gguf",
+          "size": 54400261344,
+          "sha256": "2af1a1f000ab162ea77795348a3df054404915815a19ab04eba51cfe2d79c439"
+        },
+        {
+          "path": "Q8_0/Qwen3.8-Flash-Next-Q8_0-00004-of-00006.gguf",
+          "size": 49446841248,
+          "sha256": "680cfda198b36a61801fd0a38895690aa6af9346d36b32c0eed3f0b096ae8f7c"
+        },
+        {
+          "path": "Q8_0/Qwen3.8-Flash-Next-Q8_0-00005-of-00006.gguf",
+          "size": 49668930432,
+          "sha256": "d16e9b874de3aa2dd4a879a749747a1642c046313875ec2cbfff22a801a839aa"
+        },
+        {
+          "path": "Q8_0/Qwen3.8-Flash-Next-Q8_0-00006-of-00006.gguf",
+          "size": 34015618848,
+          "sha256": "2581ef059bc50ed4653b81223bae778202e62421854a9db3661382de763497e6"
+        }
+      ],
+      "download_bytes": 188225033440,
+      "inspection": {
+        "compatible": true,
+        "reasons": [],
+        "expert_bytes": 128345702400,
+        "ple_bytes": 54400261120,
+        "dense_bytes": 5955980800,
+        "pack_bytes": 1485656064,
+        "expert_types": [
+          "Q8_0"
+        ],
+        "ple_types": [
+          "Q8_0"
+        ],
+        "experts": 512,
+        "validation": "All shard headers checked; runtime quality and speed are not implied"
+      }
+    },
+    {
+      "id": "huihui/UD-Q4_K_XL",
+      "provider": "huihui",
+      "title": "HuiHui uncensored / abliterated",
+      "quant": "UD-Q4_K_XL",
+      "repo": "huihui-ai/Huihui-Qwen3.8-Flash-Next-abliterated-GGUF",
+      "revision": "73e9eb7c69fdbf667def63e233e70845e7d5ac0b",
+      "files": [
+        {
+          "path": "UD-Q4_K_XL/Qwen3.8-Flash-Next-UD-Q4_K_XL-00001-of-00004.gguf",
+          "size": 10946752,
+          "sha256": "290a31ca20b74ed2c21b257d378a5678d821ad9fdd8feb1fc52c719761668903"
+        },
+        {
+          "path": "UD-Q4_K_XL/Qwen3.8-Flash-Next-UD-Q4_K_XL-00002-of-00004.gguf",
+          "size": 49859583296,
+          "sha256": "0ebf70d076e0e98f74dc414a90b92c67d7267876ae524bc7799cf463e27b754b"
+        },
+        {
+          "path": "UD-Q4_K_XL/Qwen3.8-Flash-Next-UD-Q4_K_XL-00003-of-00004.gguf",
+          "size": 49376141664,
+          "sha256": "e9b12f44e13e60d6ef9396449f7b4356b2e2911222b8183a596830c2418db19a"
+        },
+        {
+          "path": "UD-Q4_K_XL/Qwen3.8-Flash-Next-UD-Q4_K_XL-00004-of-00004.gguf",
+          "size": 12087983680,
+          "sha256": "983901b3e47686f56f5fcec87ba8c51e7e2c6996277dd77bc3fc804a1d563da3"
+        }
+      ],
+      "download_bytes": 111334655392,
+      "inspection": {
+        "compatible": true,
+        "reasons": [],
+        "expert_bytes": 77017907200,
+        "ple_bytes": 28800138240,
+        "dense_bytes": 5955980800,
+        "pack_bytes": 1485656064,
+        "expert_types": [
+          "Q4_K",
+          "Q5_1",
+          "Q5_K",
+          "Q8_0"
+        ],
+        "ple_types": [
+          "IQ4_NL"
+        ],
+        "experts": 512,
+        "validation": "All shard headers checked; runtime quality and speed are not implied"
+      }
+    },
+    {
+      "id": "unsloth/BF16",
+      "provider": "unsloth",
+      "title": "Unsloth",
+      "quant": "BF16",
+      "repo": "unsloth/Qwen3.8-Flash-Next-GGUF",
+      "revision": "38bb39ee97821de2c9009abb7e93950eec396e66",
+      "files": [
+        {
+          "path": "BF16/Qwen3.8-Flash-Next-BF16-00001-of-00008.gguf",
+          "size": 10946368,
+          "sha256": "348986b2568af284eb16a0be0ccd17aa4cf0bc823de4a1c9da8e5a24365e3fd9"
+        },
+        {
+          "path": "BF16/Qwen3.8-Flash-Next-BF16-00002-of-00008.gguf",
+          "size": 10447201664,
+          "sha256": "905f21f256847501da84872c526791539a660328b85b701049d859a1c3dfa1cd"
+        },
+        {
+          "path": "BF16/Qwen3.8-Flash-Next-BF16-00003-of-00008.gguf",
+          "size": 102400491712,
+          "sha256": "fd6926a9142df95273cb92623b151f09d260f85b7c02e9469a1b610b552c6d0e"
+        },
+        {
+          "path": "BF16/Qwen3.8-Flash-Next-BF16-00004-of-00008.gguf",
+          "size": 48394236672,
+          "sha256": "e4ca944e85c400a5fecb6fd7b0ae0358b67e9bb39ded38a9a8596f8850e7e6dc"
+        },
+        {
+          "path": "BF16/Qwen3.8-Flash-Next-BF16-00005-of-00008.gguf",
+          "size": 48367899040,
+          "sha256": "c110361d1bbe8064e15c58c456cc35f0fe3d1b1329869e51b067909f83b95e6e"
+        },
+        {
+          "path": "BF16/Qwen3.8-Flash-Next-BF16-00006-of-00008.gguf",
+          "size": 48615233984,
+          "sha256": "cbce912e81f2d983e0a302ceb48554a45ecade9b083f4827d53fc8191af3aeb6"
+        },
+        {
+          "path": "BF16/Qwen3.8-Flash-Next-BF16-00007-of-00008.gguf",
+          "size": 48367899040,
+          "sha256": "23fbbbef0920c451c2fa4d9cf96d3dd167ed38c1cead608457464812d8930bc8"
+        },
+        {
+          "path": "BF16/Qwen3.8-Flash-Next-BF16-00008-of-00008.gguf",
+          "size": 47426022016,
+          "sha256": "b6e4e5c646f8f708bd471e922004aa752acbcdac1d3abb27c9d42037630916f7"
+        }
+      ],
+      "download_bytes": 354029930496,
+      "inspection": {
+        "compatible": false,
+        "reasons": [
+          "Unsupported expert encoding: BF16"
+        ],
+        "expert_bytes": 241591910400,
+        "ple_bytes": 102400491520,
+        "dense_bytes": 9900428800,
+        "pack_bytes": 9900497856,
+        "expert_types": [
+          "BF16"
+        ],
+        "ple_types": [
+          "BF16"
+        ],
+        "experts": 512,
+        "validation": "All shard headers checked; runtime quality and speed are not implied"
+      }
+    },
+    {
+      "id": "unsloth/Q8_0",
+      "provider": "unsloth",
+      "title": "Unsloth",
+      "quant": "Q8_0",
+      "repo": "unsloth/Qwen3.8-Flash-Next-GGUF",
+      "revision": "38bb39ee97821de2c9009abb7e93950eec396e66",
+      "files": [
+        {
+          "path": "Q8_0/Qwen3.8-Flash-Next-Q8_0-00001-of-00006.gguf",
+          "size": 10946624,
+          "sha256": "2dabcbb53ca537a7947bc7d20414fd464eeaf4d66d43021b5b2556cc87544ad2"
+        },
+        {
+          "path": "Q8_0/Qwen3.8-Flash-Next-Q8_0-00002-of-00006.gguf",
+          "size": 682434912,
+          "sha256": "494ca4ed3dbf97bc28da88af3890b8877b9032f909812d00c0526a9ca5e91d2e"
+        },
+        {
+          "path": "Q8_0/Qwen3.8-Flash-Next-Q8_0-00003-of-00006.gguf",
+          "size": 54400261312,
+          "sha256": "34efd79a80a1ce540a517a5d56171924b66ce1c38b04c904f17ad6d8ef17cf20"
+        },
+        {
+          "path": "Q8_0/Qwen3.8-Flash-Next-Q8_0-00004-of-00006.gguf",
+          "size": 49446841216,
+          "sha256": "bfa634025fabbd2658bf7694bc80b90e571699c768723f844c934c7ef06c691a"
+        },
+        {
+          "path": "Q8_0/Qwen3.8-Flash-Next-Q8_0-00005-of-00006.gguf",
+          "size": 49668930400,
+          "sha256": "232a8f14cc0fa4262e7efe8593774b136fe40909e39c7a020342ddaa27259a97"
+        },
+        {
+          "path": "Q8_0/Qwen3.8-Flash-Next-Q8_0-00006-of-00006.gguf",
+          "size": 34015618784,
+          "sha256": "538a93bca918064983409a41187ad4c68640f9aced6f29564da8f551bf86d7a5"
+        }
+      ],
+      "download_bytes": 188225033248,
+      "inspection": {
+        "compatible": true,
+        "reasons": [],
+        "expert_bytes": 128345702400,
+        "ple_bytes": 54400261120,
+        "dense_bytes": 5955980800,
+        "pack_bytes": 1485656064,
+        "expert_types": [
+          "Q8_0"
+        ],
+        "ple_types": [
+          "Q8_0"
+        ],
+        "experts": 512,
+        "validation": "All shard headers checked; runtime quality and speed are not implied"
+      }
+    },
+    {
+      "id": "unsloth/UD-IQ1_M",
+      "provider": "unsloth",
+      "title": "Unsloth",
+      "quant": "UD-IQ1_M",
+      "repo": "unsloth/Qwen3.8-Flash-Next-GGUF",
+      "revision": "38bb39ee97821de2c9009abb7e93950eec396e66",
+      "files": [
+        {
+          "path": "UD-IQ1_M/Qwen3.8-Flash-Next-UD-IQ1_M-00001-of-00003.gguf",
+          "size": 10946624,
+          "sha256": "6584f289c808a486ac33aef20906774bcf6616785535c03b842072951e5112d2"
+        },
+        {
+          "path": "UD-IQ1_M/Qwen3.8-Flash-Next-UD-IQ1_M-00002-of-00003.gguf",
+          "size": 49988981792,
+          "sha256": "a7cbafba2cbc1ccde484ed05e1bbeaef4d67e0924ef51cc8b8de18e62edb5586"
+        },
+        {
+          "path": "UD-IQ1_M/Qwen3.8-Flash-Next-UD-IQ1_M-00003-of-00003.gguf",
+          "size": 24538827360,
+          "sha256": "ae757ff9347651adacc7746f137d8c29b51f25cf6bb27cd49086ef45bd8cc203"
+        }
+      ],
+      "download_bytes": 74538755776,
+      "inspection": {
+        "compatible": true,
+        "reasons": [],
+        "expert_bytes": 41838182400,
+        "ple_bytes": 28800138240,
+        "dense_bytes": 4339806720,
+        "pack_bytes": 1485656064,
+        "expert_types": [
+          "IQ1_M",
+          "IQ2_XXS",
+          "IQ4_NL"
+        ],
+        "ple_types": [
+          "IQ4_NL"
+        ],
+        "experts": 512,
+        "validation": "All shard headers checked; runtime quality and speed are not implied"
+      }
+    },
+    {
+      "id": "unsloth/UD-IQ1_S",
+      "provider": "unsloth",
+      "title": "Unsloth",
+      "quant": "UD-IQ1_S",
+      "repo": "unsloth/Qwen3.8-Flash-Next-GGUF",
+      "revision": "38bb39ee97821de2c9009abb7e93950eec396e66",
+      "files": [
+        {
+          "path": "UD-IQ1_S/Qwen3.8-Flash-Next-UD-IQ1_S-00001-of-00003.gguf",
+          "size": 10946624,
+          "sha256": "88a1420825a9304063e882ada29d438263617f51ac8923d438d927496693bafd"
+        },
+        {
+          "path": "UD-IQ1_S/Qwen3.8-Flash-Next-UD-IQ1_S-00002-of-00003.gguf",
+          "size": 49990818368,
+          "sha256": "3a62e35bbf9add4733bd1438ebd3a67649d5edd6cb0e72bb78e33c913992b2b6"
+        },
+        {
+          "path": "UD-IQ1_S/Qwen3.8-Flash-Next-UD-IQ1_S-00003-of-00003.gguf",
+          "size": 22544696352,
+          "sha256": "0e25ceaeb89b8a80aa973c6c0c7448943682f7408c2855b2ebd016b7643a861a"
+        }
+      ],
+      "download_bytes": 72546461344,
+      "inspection": {
+        "compatible": false,
+        "reasons": [
+          "Unsupported expert encoding: IQ1_S"
+        ],
+        "expert_bytes": 39845888000,
+        "ple_bytes": 28800138240,
+        "dense_bytes": 4339806720,
+        "pack_bytes": 1485656064,
+        "expert_types": [
+          "IQ1_S",
+          "IQ2_XXS",
+          "IQ4_NL"
+        ],
+        "ple_types": [
+          "IQ4_NL"
+        ],
+        "experts": 512,
+        "validation": "All shard headers checked; runtime quality and speed are not implied"
+      }
+    },
+    {
+      "id": "unsloth/UD-IQ3_XXS",
+      "provider": "unsloth",
+      "title": "Unsloth",
+      "quant": "UD-IQ3_XXS",
+      "repo": "unsloth/Qwen3.8-Flash-Next-GGUF",
+      "revision": "38bb39ee97821de2c9009abb7e93950eec396e66",
+      "files": [
+        {
+          "path": "UD-IQ3_XXS/Qwen3.8-Flash-Next-UD-IQ3_XXS-00001-of-00003.gguf",
+          "size": 10946624,
+          "sha256": "268f81fdedf3149a538f252308927a4d5d1f6e062c178568a51e3b519744f8a8"
+        },
+        {
+          "path": "UD-IQ3_XXS/Qwen3.8-Flash-Next-UD-IQ3_XXS-00002-of-00003.gguf",
+          "size": 49567921344,
+          "sha256": "cfe600b236b88c7fad1613a5ca5e83b9f2beb63cbd44c32b2be50a44747c695f"
+        },
+        {
+          "path": "UD-IQ3_XXS/Qwen3.8-Flash-Next-UD-IQ3_XXS-00003-of-00003.gguf",
+          "size": 32382955968,
+          "sha256": "f1912ba34c79427d2295a58dcb2b732b5931af5bef7a373c60557a57d9ee7250"
+        }
+      ],
+      "download_bytes": 81961823936,
+      "inspection": {
+        "compatible": true,
+        "reasons": [],
+        "expert_bytes": 48627712000,
+        "ple_bytes": 28800138240,
+        "dense_bytes": 4973345280,
+        "pack_bytes": 1485656064,
+        "expert_types": [
+          "IQ2_S",
+          "IQ3_S",
+          "IQ4_NL"
+        ],
+        "ple_types": [
+          "IQ4_NL"
+        ],
+        "experts": 512,
+        "validation": "All shard headers checked; runtime quality and speed are not implied"
+      }
+    },
+    {
+      "id": "unsloth/UD-IQ4_XS",
+      "provider": "unsloth",
+      "title": "Unsloth",
+      "quant": "UD-IQ4_XS",
+      "repo": "unsloth/Qwen3.8-Flash-Next-GGUF",
+      "revision": "38bb39ee97821de2c9009abb7e93950eec396e66",
+      "files": [
+        {
+          "path": "UD-IQ4_XS/Qwen3.8-Flash-Next-UD-IQ4_XS-00001-of-00003.gguf",
+          "size": 10946624,
+          "sha256": "5ce89370720f8bf90890f439361282104c1aa1482d4013bb9a50923e758e71a4"
+        },
+        {
+          "path": "UD-IQ4_XS/Qwen3.8-Flash-Next-UD-IQ4_XS-00002-of-00003.gguf",
+          "size": 49835229856,
+          "sha256": "577a38a2392b40ca2193cea502e1d92f60b8cd370675d308e0ec21885d9daaa7"
+        },
+        {
+          "path": "UD-IQ4_XS/Qwen3.8-Flash-Next-UD-IQ4_XS-00003-of-00003.gguf",
+          "size": 43836407744,
+          "sha256": "d4634e6d84f0ebb0940be15c90d3790bf6464e3dea3a1cddc567dc0e83ad8833"
+        }
+      ],
+      "download_bytes": 93682584224,
+      "inspection": {
+        "compatible": true,
+        "reasons": [],
+        "expert_bytes": 59519795200,
+        "ple_bytes": 28800138240,
+        "dense_bytes": 5802022400,
+        "pack_bytes": 1485656064,
+        "expert_types": [
+          "IQ3_S",
+          "IQ4_NL",
+          "IQ4_XS",
+          "Q8_0"
+        ],
+        "ple_types": [
+          "IQ4_NL"
+        ],
+        "experts": 512,
+        "validation": "All shard headers checked; runtime quality and speed are not implied"
+      }
+    },
+    {
+      "id": "unsloth/UD-Q2_K_XL",
+      "provider": "unsloth",
+      "title": "Unsloth",
+      "quant": "UD-Q2_K_XL",
+      "repo": "unsloth/Qwen3.8-Flash-Next-GGUF",
+      "revision": "38bb39ee97821de2c9009abb7e93950eec396e66",
+      "files": [
+        {
+          "path": "UD-Q2_K_XL/Qwen3.8-Flash-Next-UD-Q2_K_XL-00001-of-00003.gguf",
+          "size": 10946624,
+          "sha256": "a4f3b21e77353999829f2f767e9ac21ce9c71d29a74f2cc9eda48c9bf23c8b86"
+        },
+        {
+          "path": "UD-Q2_K_XL/Qwen3.8-Flash-Next-UD-Q2_K_XL-00002-of-00003.gguf",
+          "size": 49979779296,
+          "sha256": "2e3bf1ee7d2a04e261e9f342a2d968f696cce5941d082b0e434deb9b1edc12c6"
+        },
+        {
+          "path": "UD-Q2_K_XL/Qwen3.8-Flash-Next-UD-Q2_K_XL-00003-of-00003.gguf",
+          "size": 28878402944,
+          "sha256": "ec8c106759fdf4f463039c34c0707718d7d8908d53d892bd4f002e71620803f9"
+        }
+      ],
+      "download_bytes": 78869128864,
+      "inspection": {
+        "compatible": true,
+        "reasons": [],
+        "expert_bytes": 46084915200,
+        "ple_bytes": 28800138240,
+        "dense_bytes": 4423447040,
+        "pack_bytes": 1485656064,
+        "expert_types": [
+          "IQ2_XS",
+          "IQ3_XXS",
+          "IQ4_NL"
+        ],
+        "ple_types": [
+          "IQ4_NL"
+        ],
+        "experts": 512,
+        "validation": "All shard headers checked; runtime quality and speed are not implied"
+      }
+    },
+    {
+      "id": "unsloth/UD-Q3_K_XL",
+      "provider": "unsloth",
+      "title": "Unsloth",
+      "quant": "UD-Q3_K_XL",
+      "repo": "unsloth/Qwen3.8-Flash-Next-GGUF",
+      "revision": "38bb39ee97821de2c9009abb7e93950eec396e66",
+      "files": [
+        {
+          "path": "UD-Q3_K_XL/Qwen3.8-Flash-Next-UD-Q3_K_XL-00001-of-00003.gguf",
+          "size": 10946624,
+          "sha256": "f2ef4328929d8b8c8930e2856eef52128dd4ce3425302f04bc3c657431cc4c49"
+        },
+        {
+          "path": "UD-Q3_K_XL/Qwen3.8-Flash-Next-UD-Q3_K_XL-00002-of-00003.gguf",
+          "size": 49983253824,
+          "sha256": "7d230e7c9421d868b89eebaf23033af0ea1a4e046956df00fb156814fb62346e"
+        },
+        {
+          "path": "UD-Q3_K_XL/Qwen3.8-Flash-Next-UD-Q3_K_XL-00003-of-00003.gguf",
+          "size": 39992153376,
+          "sha256": "21d4f90f9cd7b7c3a1582667c20cb22f7b03de895b88a23bb20aaeaa44f2c199"
+        }
+      ],
+      "download_bytes": 89986353824,
+      "inspection": {
+        "compatible": true,
+        "reasons": [],
+        "expert_bytes": 55823564800,
+        "ple_bytes": 28800138240,
+        "dense_bytes": 5802022400,
+        "pack_bytes": 1485656064,
+        "expert_types": [
+          "IQ3_XXS",
+          "IQ4_NL",
+          "IQ4_XS",
+          "Q8_0"
+        ],
+        "ple_types": [
+          "IQ4_NL"
+        ],
+        "experts": 512,
+        "validation": "All shard headers checked; runtime quality and speed are not implied"
+      }
+    },
+    {
+      "id": "unsloth/UD-Q4_K_XL",
+      "provider": "unsloth",
+      "title": "Unsloth",
+      "quant": "UD-Q4_K_XL",
+      "repo": "unsloth/Qwen3.8-Flash-Next-GGUF",
+      "revision": "38bb39ee97821de2c9009abb7e93950eec396e66",
+      "files": [
+        {
+          "path": "UD-Q4_K_XL/Qwen3.8-Flash-Next-UD-Q4_K_XL-00001-of-00004.gguf",
+          "size": 10946624,
+          "sha256": "4448186216b3af4cc558bbce2c3213f01608f8f8b2e5267a9767971dd3ec8082"
+        },
+        {
+          "path": "UD-Q4_K_XL/Qwen3.8-Flash-Next-UD-Q4_K_XL-00002-of-00004.gguf",
+          "size": 49859583136,
+          "sha256": "3f342f1c1580473f1ee94ddd5b28206e8c07a70fa1a366f59d1d6c922919a6c9"
+        },
+        {
+          "path": "UD-Q4_K_XL/Qwen3.8-Flash-Next-UD-Q4_K_XL-00003-of-00004.gguf",
+          "size": 49376141504,
+          "sha256": "56758f40269cad5cd9b0d3d6fbae0f40f6d5be6de49e4ab392dbe83157d9cbd3"
+        },
+        {
+          "path": "UD-Q4_K_XL/Qwen3.8-Flash-Next-UD-Q4_K_XL-00004-of-00004.gguf",
+          "size": 12087983520,
+          "sha256": "753bda48b98ba4f1636134a90a967de1b2d3908a236c026e464777342e53510a"
+        }
+      ],
+      "download_bytes": 111334654784,
+      "inspection": {
+        "compatible": true,
+        "reasons": [],
+        "expert_bytes": 77017907200,
+        "ple_bytes": 28800138240,
+        "dense_bytes": 5955980800,
+        "pack_bytes": 1485656064,
+        "expert_types": [
+          "Q4_K",
+          "Q5_1",
+          "Q5_K",
+          "Q8_0"
+        ],
+        "ple_types": [
+          "IQ4_NL"
+        ],
+        "experts": 512,
+        "validation": "All shard headers checked; runtime quality and speed are not implied"
+      }
+    },
+    {
+      "id": "unsloth/UD-Q5_K_XL",
+      "provider": "unsloth",
+      "title": "Unsloth",
+      "quant": "UD-Q5_K_XL",
+      "repo": "unsloth/Qwen3.8-Flash-Next-GGUF",
+      "revision": "38bb39ee97821de2c9009abb7e93950eec396e66",
+      "files": [
+        {
+          "path": "UD-Q5_K_XL/Qwen3.8-Flash-Next-UD-Q5_K_XL-00001-of-00006.gguf",
+          "size": 10946618,
+          "sha256": "610922cdb1afe1094e95d7a3e86b12ee33317ebbf7320ac9344e21b6ae4bb69f"
+        },
+        {
+          "path": "UD-Q5_K_XL/Qwen3.8-Flash-Next-UD-Q5_K_XL-00002-of-00006.gguf",
+          "size": 682434912,
+          "sha256": "494ca4ed3dbf97bc28da88af3890b8877b9032f909812d00c0526a9ca5e91d2e"
+        },
+        {
+          "path": "UD-Q5_K_XL/Qwen3.8-Flash-Next-UD-Q5_K_XL-00003-of-00006.gguf",
+          "size": 54400261312,
+          "sha256": "34efd79a80a1ce540a517a5d56171924b66ce1c38b04c904f17ad6d8ef17cf20"
+        },
+        {
+          "path": "UD-Q5_K_XL/Qwen3.8-Flash-Next-UD-Q5_K_XL-00004-of-00006.gguf",
+          "size": 49990245824,
+          "sha256": "9ee6bbe462e6830864382d629101490625b1c95afa15492b7ad550c7bed2dd13"
+        },
+        {
+          "path": "UD-Q5_K_XL/Qwen3.8-Flash-Next-UD-Q5_K_XL-00005-of-00006.gguf",
+          "size": 49882416192,
+          "sha256": "0b2437f661f584030cb5aeb8fb1bb70f6422518a6746bfcc0304167c7b6b8beb"
+        },
+        {
+          "path": "UD-Q5_K_XL/Qwen3.8-Flash-Next-UD-Q5_K_XL-00006-of-00006.gguf",
+          "size": 3320101792,
+          "sha256": "55dd96c5ad0863b06b6393151b9ad0ac727b8d58a62e02a296ca5d5ddbfee4a3"
+        }
+      ],
+      "download_bytes": 158286406650,
+      "inspection": {
+        "compatible": true,
+        "reasons": [],
+        "expert_bytes": 98369536000,
+        "ple_bytes": 54400261120,
+        "dense_bytes": 5955980800,
+        "pack_bytes": 1485656064,
+        "expert_types": [
+          "Q5_K",
+          "Q6_K",
+          "Q8_0"
+        ],
+        "ple_types": [
+          "Q8_0"
+        ],
+        "experts": 512,
+        "validation": "All shard headers checked; runtime quality and speed are not implied"
+      }
+    },
+    {
+      "id": "unsloth/UD-Q6_K_XL",
+      "provider": "unsloth",
+      "title": "Unsloth",
+      "quant": "UD-Q6_K_XL",
+      "repo": "unsloth/Qwen3.8-Flash-Next-GGUF",
+      "revision": "38bb39ee97821de2c9009abb7e93950eec396e66",
+      "files": [
+        {
+          "path": "UD-Q6_K_XL/Qwen3.8-Flash-Next-UD-Q6_K_XL-00001-of-00006.gguf",
+          "size": 10946624,
+          "sha256": "8bdc6bad55b6699f46f60708829932ff4018d7ac9bd309c388534fa31753bdb7"
+        },
+        {
+          "path": "UD-Q6_K_XL/Qwen3.8-Flash-Next-UD-Q6_K_XL-00002-of-00006.gguf",
+          "size": 682434912,
+          "sha256": "494ca4ed3dbf97bc28da88af3890b8877b9032f909812d00c0526a9ca5e91d2e"
+        },
+        {
+          "path": "UD-Q6_K_XL/Qwen3.8-Flash-Next-UD-Q6_K_XL-00003-of-00006.gguf",
+          "size": 54400261312,
+          "sha256": "34efd79a80a1ce540a517a5d56171924b66ce1c38b04c904f17ad6d8ef17cf20"
+        },
+        {
+          "path": "UD-Q6_K_XL/Qwen3.8-Flash-Next-UD-Q6_K_XL-00004-of-00006.gguf",
+          "size": 49814108512,
+          "sha256": "0ea4b599880a5a52fcd9c188ba1443f646c69c96571904ddbd6a79246a01a997"
+        },
+        {
+          "path": "UD-Q6_K_XL/Qwen3.8-Flash-Next-UD-Q6_K_XL-00005-of-00006.gguf",
+          "size": 49419317344,
+          "sha256": "9948e81ae8368144b135a7403d8c0f2cf9a6c2f9f692313865855b2832e696c9"
+        },
+        {
+          "path": "UD-Q6_K_XL/Qwen3.8-Flash-Next-UD-Q6_K_XL-00006-of-00006.gguf",
+          "size": 14838313984,
+          "sha256": "e4ae255234f42b18012f6d6eec5bf615b57479b7e0a0233c47436a321ffeec3f"
+        }
+      ],
+      "download_bytes": 169165382688,
+      "inspection": {
+        "compatible": true,
+        "reasons": [],
+        "expert_bytes": 109248512000,
+        "ple_bytes": 54400261120,
+        "dense_bytes": 5955980800,
+        "pack_bytes": 1485656064,
+        "expert_types": [
+          "Q6_K",
+          "Q8_0"
+        ],
+        "ple_types": [
+          "Q8_0"
+        ],
+        "experts": 512,
+        "validation": "All shard headers checked; runtime quality and speed are not implied"
+      }
+    }
+  ]
+}

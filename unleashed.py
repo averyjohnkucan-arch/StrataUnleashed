@@ -209,7 +209,12 @@ def main():
         "--config", type=Path, help="Existing engine config instead of --model"
     )
     ap.add_argument("--context", type=int, default=16384)
-    ap.add_argument("--port", type=int, help="HTTP port; overrides the config (default 8100)")
+    ap.add_argument(
+        "--port", type=int, help="HTTP port; overrides the config (default 8100)"
+    )
+    ap.add_argument(
+        "--gpu", type=int, help="Physical NVIDIA GPU index for single-GPU tuning"
+    )
     ap.add_argument(
         "--reserve-vram-mib",
         type=int,
@@ -229,6 +234,8 @@ def main():
     configure_environment()
     if a.reserve_vram_mib < 0:
         ap.error("--reserve-vram-mib must not be negative")
+    if a.gpu is not None and a.gpu < 0:
+        ap.error("--gpu must not be negative")
     if a.build:
         build()
     if not a.model and not a.config:
@@ -335,6 +342,8 @@ def main():
         }
         if a.mtp:
             cfg["tune_mtp"] = str(a.mtp.resolve())
+    if a.gpu is not None:
+        cfg["gpu"] = a.gpu
     cfg["unleashed_tuning"] = {"reserve_vram_mib": a.reserve_vram_mib}
     key, evidence = signature(cfg)
     out = ROOT / "work/autotune" / key
@@ -366,7 +375,7 @@ def main():
         return 0
     port = a.port if a.port is not None else cfg.get("port", 8100)
     print(
-        f'Starting Strata Unleashed at http://127.0.0.1:{port} using {best}',
+        f"Starting Strata Unleashed at http://127.0.0.1:{port} using {best}",
         flush=True,
     )
     run(

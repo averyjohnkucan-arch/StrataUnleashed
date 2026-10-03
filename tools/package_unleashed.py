@@ -3,11 +3,14 @@ Linux may include the tested build/strata. Windows is source-only unless --windo
 points to an actual Windows build produced and validated on Windows.
 """
 
-import argparse, hashlib, json, os, platform, subprocess, tarfile, time, zipfile
+import argparse, hashlib, json, os, platform, re, subprocess, tarfile, time, zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-VERSION = "0.1.0"
+VERSION = re.search(
+    r"project\(strata VERSION ([0-9.]+)",
+    (ROOT / "CMakeLists.txt").read_text(encoding="utf-8-sig"),
+)[1]
 DIRECTORIES = (
     "src",
     "include",
@@ -32,6 +35,8 @@ FILES = (
     "start-unleashed.sh",
     "start-unleashed.ps1",
     "START-UNLEASHED.bat",
+    "CLI-UNLEASHED.bat",
+    "cli-unleashed.sh",
     "BUILD-UNLEASHED.ps1",
     "BUILD-UNLEASHED.sh",
     "RELEASE-NOTES.md",
@@ -71,6 +76,12 @@ def sources():
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument(
+        "--linux-exe",
+        type=Path,
+        default=ROOT / "build/strata",
+        help="Validated Linux binary to package",
+    )
     ap.add_argument("--windows-exe", type=Path)
     a = ap.parse_args()
     out = ROOT / "releases"
@@ -86,7 +97,7 @@ def main():
     manifests = {}
     for target in ("linux-x86_64", "windows-x86_64"):
         files = [(p, p.relative_to(ROOT).as_posix()) for p in base]
-        binary = ROOT / "build/strata" if target.startswith("linux") else a.windows_exe
+        binary = a.linux_exe if target.startswith("linux") else a.windows_exe
         if binary and binary.is_file():
             files.append(
                 (
@@ -99,7 +110,9 @@ def main():
             "name": "Strata Unleashed",
             "version": VERSION,
             "target": target,
-            "upstream_commit": srcid,
+            "source_commit": srcid,
+            "upstream_commit": "99f3dbd0b21d1401b3769e0c0d963913607f380b",
+            "upstream_version": VERSION,
             "kind": (
                 "binary-and-source" if binary and binary.is_file() else "source-build"
             ),

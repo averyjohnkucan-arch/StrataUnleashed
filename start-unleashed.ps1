@@ -23,5 +23,10 @@ if (-not (Test-Path $receipt)) {
     if ($LASTEXITCODE -ne 0) { throw 'Installing the local Python dependencies failed.' }
     New-Item -ItemType File -Force $receipt | Out-Null
 }
-& $python -B unleashed.py @args
+if ($args.Count -eq 0 -or $args[0] -eq '--wizard') {
+    $wizardArgs = @($args | Select-Object -Skip 1)
+    & $python -B -m tools.unleashed_wizard @wizardArgs
+} else {
+    & $python -B unleashed.py @args
+}
 exit $LASTEXITCODE

@@ -1,5 +1,7 @@
 # Strata Unleashed
 
+For interactive hardware scanning, model/quant recommendations and downloads, start `cli-unleashed.sh` (Linux) or `CLI-UNLEASHED.bat` (Windows). See [the complete CLI guide](docs/UNLEASHED-CLI.md). The original direct launch commands below still work.
+
 A local fork of Niko1221/Strata with the retained SSD changes, broader native weight formats, optional MTP, independent K/V precisions, and measured self-tuning. The supported model family is **Qwen3.8-Flash-Next / `qwen4exp`**, including its compatible quantized and pruned variants. This is not a generic engine for unrelated architectures or arbitrary attention dimensions.
 
 ## Start on Linux
@@ -29,6 +31,7 @@ Useful options:
 - `--retune`: measure again, even when a validated result is cached.
 - `--tune-only`: save the result without starting the API.
 - `--config path.json`: tune an existing local engine configuration. It supplies context, port and optional `tune_mtp`; `--model`, `--context` and `--mtp` are for new configurations.
+- `--gpu N`: select one physical NVIDIA GPU; defaults to 0 for new model configurations.
 - `--port 8100`: local API port; also overrides an existing configuration without retuning.
 
 ## How self-tuning works

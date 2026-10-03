@@ -1,0 +1,28 @@
+{
+  "version": "0.1.38",
+  "checked_utc": "2026-10-03T20:46:37.486355+00:00",
+  "upstream_release": "https://github.com/Niko1221/Strata/releases/tag/v0.1.38",
+  "catalog_variants": 22,
+  "catalog_shards": 170,
+  "header_compatible": 19,
+  "blocked_formats": [
+    "huihui/BF16",
+    "unsloth/BF16",
+    "unsloth/UD-IQ1_S"
+  ],
+  "unit_tests": 39,
+  "linux_cli_scan_list_json_interactive_exit": "passed",
+  "ssd_q5_local_header_inspection": "passed; 33 shards; read-only",
+  "live_resumed_download": {
+    "repo": "unsloth/Qwen3.8-Flash-Next-GGUF",
+    "revision": "38bb39ee97821de2c9009abb7e93950eec396e66",
+    "file": "Q8_0/Qwen3.8-Flash-Next-Q8_0-00001-of-00006.gguf",
+    "bytes": 10946624,
+    "sha256": "2dabcbb53ca537a7947bc7d20414fd464eeaf4d66d43021b5b2556cc87544ad2",
+    "resumed_at": 65536,
+    "passed": true
+  },
+  "engine_unchanged_sha256": "8002f567affaf3fea2f8113f8902d41cd7d87818fda6455020511187b0e99f9a",
+  "windows": "CLI source and platform simulations tested; Windows execution not available",
+  "full_model_validation": "Previous Atomic Q5 inference validation carried forward; other catalog variants are header checked, not full-model inference tested"
+}
