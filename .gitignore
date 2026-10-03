@@ -28,7 +28,6 @@ td.log
 # created by setup.py on the user's machine
 /.venv/
 /build/
-/third_party/llama.cpp
 /models/
 /packs/
 /mtp/
@@ -51,3 +50,7 @@ build-vision.bat
 /third_party/*.zip
 
 /.rocm-win/
+
+# Strata Unleashed local packs, measurements, temporary data and release archives
+/work/
+/releases/

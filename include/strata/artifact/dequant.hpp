@@ -96,6 +96,17 @@ inline void dequantize_q4_0(const uint8_t* block, float* out) {
 
 // ---- Q5_0: 32 elements from a 22-byte block. Same nibble layout as Q4_0 plus a 5th bit per element
 // packed in qh[4]; the 32 bits of qh are the high bits of elements 0..31 in order.
+inline void dequantize_q5_1(const uint8_t* block, float* out) {
+    const float d = fp16_to_fp32(read_u16(block));
+    const float m = fp16_to_fp32(read_u16(block + 2));
+    const uint8_t* qh = block + 4;
+    const uint8_t* qs = block + 8;
+    const uint32_t h = (uint32_t)qh[0] | ((uint32_t)qh[1] << 8) | ((uint32_t)qh[2] << 16) | ((uint32_t)qh[3] << 24);
+    for (int j = 0; j < 16; ++j) {
+        out[j] = (float)((qs[j] & 15) | (((h >> j) & 1u) << 4)) * d + m;
+        out[j + 16] = (float)((qs[j] >> 4) | (((h >> (j + 16)) & 1u) << 4)) * d + m;
+    }
+}
 inline void dequantize_q5_0(const uint8_t* block, float* out) {
     const float d = fp16_to_fp32(read_u16(block));
     const uint8_t* qh = block + 2;

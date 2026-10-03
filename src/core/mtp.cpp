@@ -214,6 +214,8 @@ bool MtpDrafter::load(const std::string& rt_dir, const ModelGeometry& g, Session
     int64_t ring = (window > 0 && window < max_cells) ? window + 4 * (int64_t) max_t + 64 : 0;
     // K8V4 never applies to the drafter: its own attention paths (below, and verify.cpp) handle whole formats
     // only, whatever ring shape it takes (0, a window, or the -1 fully-resident fallback).
+    const int kb_was=qsa_k_bits(), vb_was=qsa_v_bits();
+    qsa_set_kv_mixed(0,0);
     const bool kv_hybrid_was = qsa_kv_hybrid();
     const bool kv_int8_was = qsa_kv_int8();
     qsa_set_kv_hybrid(false);
@@ -233,6 +235,7 @@ bool MtpDrafter::load(const std::string& rt_dir, const ModelGeometry& g, Session
     }
     qsa_set_kv_int8(kv_int8_was);
     qsa_set_kv_hybrid(kv_hybrid_was);
+    qsa_set_kv_mixed(kb_was,vb_was);
     qsa_state_zero(st_, g, nullptr);
     cudaDeviceSynchronize();
     vram_ += sb;

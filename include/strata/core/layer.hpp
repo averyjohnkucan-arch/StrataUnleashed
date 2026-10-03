@@ -201,6 +201,9 @@ bool layer_shared_early();
 /// shorter than the sequence would have `rope_neox_apply` read past it, which is a wrong rotation rather than a
 /// fault.
 struct QsaState {
+    int k_bits = 0, v_bits = 0;
+    uint8_t* k_mixed = nullptr;
+    uint8_t* v_mixed = nullptr;
     uint16_t* k_pool = nullptr;      ///< [page][kv_head][page_size][head_dim] fp16 (null in INT8 mode)
     uint16_t* v_pool = nullptr;
     /// Plan v0.3 P7: INT8 KV (qsa_set_kv_int8). Codes [page][kv_head][page_size][head_dim], one FP16 scale per 64.
@@ -282,6 +285,9 @@ uint64_t qsa_kv_host_bytes();
 /// Plan v0.3 P7: store K/V as INT8 with FP16 scales per 64 values (half the VRAM of FP16). Set before sizing and
 /// initializing the session; default off until gate G-C accepts it.
 void qsa_set_kv_int8(bool enabled);
+void qsa_set_kv_mixed(int kb, int vb);
+int qsa_k_bits();
+int qsa_v_bits();
 /// INT8 K/V through the Hadamard rotation (off by default: STRATA_KV_ROT=1)
 void qsa_set_kv_int8_rotate(bool enabled);
 bool qsa_kv_int8();
@@ -295,7 +301,7 @@ bool qsa_kv_hybrid();
 inline int qsa_kv_format(const QsaState& st) {
     // A hybrid K8V4 state is mode 0 only and never reaches the block movers; refuse rather than let it
     // fall through to kKvF16 - a wrong layout silently applied is worse than a hard stop (PR review).
-    if (st.kv_hybrid) {
+    if (st.kv_hybrid || st.k_bits) {
         std::fprintf(stderr, "strata: qsa_kv_format: a hybrid K8V4 state must never reach the block movers\n");
         std::exit(1);   // the kernels' own "unsupported geometry" convention (kv_q8.cu, qsa_decode_attn.cu)
     }

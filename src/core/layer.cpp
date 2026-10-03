@@ -1,3 +1,4 @@
+#include "strata/kernels/kv_mixed.hpp"
 
 // src/core/layer.cpp - the GDN layer, composed.  See the header for the operation order and its traps.
 #include "strata/core/layer.hpp"
@@ -484,6 +485,7 @@ struct Cursor {    uint8_t* p;    uint64_t used = 0;    template <typename T>   
 // namespace
 namespace {
 // KV streaming (docs/kv-streaming-design.md): 0 keeps every cell in VRAM.
+int g_k_bits = 0, g_v_bits = 0;
 int64_t g_kv_resident = 0;
 uint64_t g_kv_host_bytes = 0;
 
@@ -512,6 +514,7 @@ KvPlan kv_plan(const QsaShapes& s, int64_t max_cells, int64_t ring_cells) {
     return p;
 }
 uint64_t kv_pool_bytes(const QsaShapes& s, int64_t pages, bool hybrid, bool int8) {
+    if (g_k_bits) return (uint64_t)pages * s.page_size * s.n_head_kv * (strata::kernels::kv_mixed_row_bytes(g_k_bits, s.head_dim) + strata::kernels::kv_mixed_row_bytes(g_v_bits, s.head_dim)) + 64;
     if (hybrid) {   // K8V4: the INT8 K half (codes + scales) plus the Q4_0 V half (kv_q4.hpp's rotation)
         const uint64_t rows = (uint64_t) pages * s.page_size * s.n_head_kv;
         return rows * (uint64_t) s.head_dim + rows * (uint64_t) (s.head_dim / strata::kernels::KV_Q8_GROUP) * 2 +
@@ -523,6 +526,9 @@ uint64_t kv_pool_bytes(const QsaShapes& s, int64_t pages, bool hybrid, bool int8
 }
 }  // namespace
 
+void qsa_set_kv_mixed(int kb, int vb) { g_k_bits=kb; g_v_bits=vb; }
+int qsa_k_bits() { return g_k_bits; }
+int qsa_v_bits() { return g_v_bits; }
 void qsa_set_kv_resident(int64_t cells) { g_kv_resident = cells > 0 ? cells : 0; }
 int64_t qsa_kv_resident() { return g_kv_resident; }
 int64_t qsa_kv_resident_min() { return 20480; }
@@ -552,6 +558,7 @@ uint64_t qsa_state_init(const ModelGeometry& g, int64_t max_cells, void* base, Q
     const KvPlan p = kv_plan(s, max_cells, ring_cells);
     const int64_t pages = p.pages;
     Cursor c{(uint8_t*) base};
+    st.k_bits=g_k_bits; st.v_bits=g_v_bits;
     st.kv_int8 = g_kv_int8 && !g_kv_q4;
     st.kv_q4 = g_kv_q4;
     // Hybrid K8V4, main layers only (the drafter's state is created with the globals toggled to INT8 -
@@ -565,12 +572,15 @@ uint64_t qsa_state_init(const ModelGeometry& g, int64_t max_cells, void* base, Q
         st.kv_int8 = false;
         st.kv_q4 = false;
     }
-    st.kv_rot = st.kv_q4 || (st.kv_int8 && g_kv_int8_rot);   // K8V4 rotates only V (below)
+    st.kv_rot = st.k_bits || st.kv_q4 || (st.kv_int8 && g_kv_int8_rot);   // K8V4 rotates only V (below)
     st.kv_mode = p.mode;
     st.n_slots = p.slots;
     const uint64_t rows = (uint64_t) p.slots * s.n_head_kv * s.page_size;   // VRAM rows: the slots
     const uint64_t q4_row = strata::kernels::kv_q4_bytes_per_head((int) s.head_dim);
-    if (st.kv_hybrid) {
+    if (st.k_bits) {
+        st.k_mixed=c.take<uint8_t>(rows*strata::kernels::kv_mixed_row_bytes(st.k_bits,s.head_dim));
+        st.v_mixed=c.take<uint8_t>(rows*strata::kernels::kv_mixed_row_bytes(st.v_bits,s.head_dim));
+    } else if (st.kv_hybrid) {
         st.k_q = c.take<int8_t>(rows * s.head_dim);
         st.k_scale = c.take<uint16_t>(rows * (s.head_dim / strata::kernels::KV_Q8_GROUP));
         st.v_q4 = c.take<uint8_t>(rows * q4_row);
@@ -688,7 +698,10 @@ void qsa_state_zero(const QsaState& st, const ModelGeometry& g, void* stream) {
     const QsaShapes s = qsa_shapes(g);
     cudaStream_t cs = (cudaStream_t) stream;
     const size_t rows = (size_t) st.n_slots * s.n_head_kv * s.page_size;
-    if (st.kv_hybrid) {
+    if (st.k_bits) {
+        cudaMemsetAsync(st.k_mixed,0,rows*strata::kernels::kv_mixed_row_bytes(st.k_bits,s.head_dim),cs);
+        cudaMemsetAsync(st.v_mixed,0,rows*strata::kernels::kv_mixed_row_bytes(st.v_bits,s.head_dim),cs);
+    } else if (st.kv_hybrid) {
         cudaMemsetAsync(st.k_q, 0, rows * s.head_dim, cs);
         cudaMemsetAsync(st.k_scale, 0, rows * (s.head_dim / strata::kernels::KV_Q8_GROUP) * 2, cs);
         cudaMemsetAsync(st.v_q4, 0, rows * strata::kernels::kv_q4_bytes_per_head((int) s.head_dim), cs);
@@ -716,7 +729,8 @@ void qsa_state_zero(const QsaState& st, const ModelGeometry& g, void* stream) {
 strata::kernels::QsaAttnPools qsa_attn_pools(const QsaState& st) {
     strata::kernels::QsaAttnPools pools;
     pools.page_table = st.page_table;
-    if (st.kv_hybrid) { pools.k_q = st.k_q; pools.k_scale = st.k_scale; pools.v_q4 = st.v_q4; }
+    if (st.k_bits) { pools.k_mixed=st.k_mixed; pools.v_mixed=st.v_mixed; pools.k_bits=st.k_bits; pools.v_bits=st.v_bits; }
+    else if (st.kv_hybrid) { pools.k_q = st.k_q; pools.k_scale = st.k_scale; pools.v_q4 = st.v_q4; }
     else if (st.kv_q4) { pools.k_q4 = st.k_q4; pools.v_q4 = st.v_q4; }
     else if (st.kv_int8) { pools.k_q = st.k_q; pools.v_q = st.v_q; pools.k_scale = st.k_scale; pools.v_scale = st.v_scale; }
     else { pools.k_pool = st.k_pool; pools.v_pool = st.v_pool; }
@@ -910,9 +924,11 @@ if (st.kv_rot) {   // rotated K and V (kv_q4.hpp): Q4_0, and INT8 with STRATA_KV
     strata::kernels::fwht256_inplace_cuda(b.kcur, g.n_head_kv, stream);
     strata::kernels::fwht256_inplace_cuda(b.vcur, g.n_head_kv, stream);
 }
-if (st.kv_q4) {
+if (st.k_bits) {
+    kv_mixed_append(st.k_mixed,st.v_mixed,st.k_bits,st.v_bits,st.page_table,st.step,0,1,b.kcur,b.vcur,s,stream);
+} else if (st.kv_q4) {
     strata::kernels::kv_append_q4_step(st.k_q4, st.v_q4, st.page_table, st.step, b.kcur, b.vcur, s, stream, &st.host);
-} else if (st.kv_int8) kv_append_q8_step(st.k_q, st.v_q, st.k_scale, st.v_scale, st.page_table, st.step, b.kcur, b.vcur, s, stream, &st.host);    else kv_append_step(st.k_pool, st.v_pool, st.page_table, st.step, b.kcur, b.vcur, s, stream, &st.host); } /* not K8V4 */    {        const uint64_t nvk = (uint64_t) g.n_head_kv * g.head_dim;        const uint64_t base = (uint64_t) 2 * g.n_embd + 2 * g.hc + (uint64_t) g.n_head * g.head_dim + 2 * nvk + 8;        if (!st.kv_int8 && !st.kv_hybrid) dump_slot(dump, g, layer, (const float*) st.k_pool, base, nvk / 2, stream);        if (!st.kv_int8 && !st.kv_hybrid) dump_slot(dump, g, layer, (const float*) st.v_pool, base + nvk / 2, nvk / 2, stream);        dump_slot(dump, g, layer, b.vcur, base + nvk, nvk, stream);        dump_slot(dump, g, layer, b.kcur, base + 2 * nvk, nvk, stream);    }    {        const QsaIndexerBuffers ib{st.idx_tail, st.idx_dead, st.idx_pooled, st.idx_block_pos};        if (native_qsa_indexer_enabled()) {
+} else if (st.kv_int8) kv_append_q8_step(st.k_q, st.v_q, st.k_scale, st.v_scale, st.page_table, st.step, b.kcur, b.vcur, s, stream, &st.host);    else kv_append_step(st.k_pool, st.v_pool, st.page_table, st.step, b.kcur, b.vcur, s, stream, &st.host); } /* not K8V4 */    {        const uint64_t nvk = (uint64_t) g.n_head_kv * g.head_dim;        const uint64_t base = (uint64_t) 2 * g.n_embd + 2 * g.hc + (uint64_t) g.n_head * g.head_dim + 2 * nvk + 8;        if (!st.k_bits && !st.kv_q4 && !st.kv_int8 && !st.kv_hybrid) dump_slot(dump, g, layer, (const float*) st.k_pool, base, nvk / 2, stream);        if (!st.k_bits && !st.kv_q4 && !st.kv_int8 && !st.kv_hybrid) dump_slot(dump, g, layer, (const float*) st.v_pool, base + nvk / 2, nvk / 2, stream);        dump_slot(dump, g, layer, b.vcur, base + nvk, nvk, stream);        dump_slot(dump, g, layer, b.kcur, base + 2 * nvk, nvk, stream);    }    {        const QsaIndexerBuffers ib{st.idx_tail, st.idx_dead, st.idx_pooled, st.idx_block_pos};        if (native_qsa_indexer_enabled()) {
     try {
         native_qsa_indexer_append(b.idx_raw, st.step + kStepPos, pos_base,
             (const float*) w_ikn->data, RMS_EPS, ib, s, st.max_cells, rope_scaling(), stream);
@@ -951,7 +967,9 @@ int64_t max_blocks = (st.max_cells / s.idx_block) + 2;
         const strata::kernels::QsaAttnPools pools = qsa_attn_pools(st);
         strata::kernels::qsa_decode_attn_step(b.qcur, pools, b.ids, st.step, cap, s, b.attn_scratch, b.attn, stream);
     } else {
-    if (st.kv_hybrid) {
+    if (st.k_bits) {
+        kv_mixed_gather(st.k_mixed,st.v_mixed,st.k_bits,st.v_bits,st.page_table,b.ids,st.step,cap,s,b.k_scratch,b.v_scratch,stream);
+    } else if (st.kv_hybrid) {
         kv_gather_q8_step(st.k_q, st.k_q, st.k_scale, st.k_scale, st.page_table, b.ids, st.step, cap, s,
                           b.k_scratch, b.k_scratch, stream);
         strata::kernels::kv_gather_q4_step(st.v_q4, st.v_q4, st.page_table, b.ids, st.step, cap, s,

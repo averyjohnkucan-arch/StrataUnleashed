@@ -1,3 +1,4 @@
+#include "strata/kernels/kv_mixed.hpp"
 // src/core/verify.cpp - see include/strata/core/verify.hpp.
 #include "strata/core/verify.hpp"
 #if defined(_WIN32)
@@ -586,7 +587,9 @@ bool Verifier::record_window(int T, cudaStream_t cs, std::string& err) {
                 if (grp == 0) copy_from_mapped(tail_snap_ + (size_t) qi * TS, st.idx_tail, TS, cs);
                 for (int t = tb; t < te; ++t) {
                     const int32_t* step_t = step_ + t * kStepCount;
-                    if (st.kv_hybrid) {   // K8V4: the unused half's lanes folded onto the used pool (layer.cpp)
+                    if (st.k_bits) {
+                        kv_mixed_append(st.k_mixed,st.v_mixed,st.k_bits,st.v_bits,st.page_table,step_t,0,1,kcur_+t*NKV*HD,vcur_+t*NKV*HD,s,cs);
+                    } else if (st.kv_hybrid) {   // K8V4: the unused half's lanes folded onto the used pool (layer.cpp)
                         kv_append_q8_step(st.k_q, st.k_q, st.k_scale, st.k_scale, st.page_table, step_t,
                                           kcur_ + t * NKV * HD, kcur_ + t * NKV * HD, s, cs, nullptr);
                         kv_append_q4_step(st.v_q4, st.v_q4, st.page_table, step_t, vcur_ + t * NKV * HD,

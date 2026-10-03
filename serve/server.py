@@ -335,41 +335,61 @@ class StrataEngine:
             if os.environ.get("STRATA_REQUEST_LINES") and os.path.abspath(log) not in _echoing:
                 _echoing.add(os.path.abspath(log))
                 threading.Thread(target=echo_requests, args=(log, os.path.getsize(log)), daemon=True).start()
-        self.proc = subprocess.Popen([exe, "--serve", *args], cwd=cwd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                     stderr=self.log, text=True, encoding="utf-8", bufsize=1, env=env)
-        contain(self.proc)                               # ends with the server, however it ends (Windows)
-        self.max_context = 0
-        for line in self.proc.stdout:
-            if line.startswith("INFO "):
-                for kv in line.split()[1:]:
-                    k, _, v = kv.partition("=")
-                    self.info[k] = int(v) if v.lstrip("-").isdigit() else v
-            if line.startswith("READY"):
-                f = line.split()
-                self.max_context = int(f[1])
-                self.can_stop = "stop" in f[2:]
-                break
-        loading.set()
-        if self.max_context <= 0:
-            try:                                        # its pipes and our handle on its log (the log stays)
-                self.proc.wait(timeout=5)
+        try:
+            self.proc = subprocess.Popen([exe, "--serve", *args], cwd=cwd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                         stderr=self.log, text=True, encoding="utf-8", bufsize=1, env=env)
+            contain(self.proc)                               # ends with the server, however it ends (Windows)
+            self.max_context = 0
+            for line in self.proc.stdout:
+                if line.startswith("INFO "):
+                    for kv in line.split()[1:]:
+                        k, _, v = kv.partition("=")
+                        self.info[k] = int(v) if v.lstrip("-").isdigit() else v
+                if line.startswith("READY"):
+                    f = line.split()
+                    self.max_context = int(f[1])
+                    self.can_stop = "stop" in f[2:]
+                    break
+            loading.set()
+            if self.max_context <= 0:
+                try:                                        # its pipes and our handle on its log (the log stays)
+                    self.proc.wait(timeout=5)
+                    self.proc.stdin.close()
+                    self.proc.stdout.close()
+                    if log:
+                        self.log.close()
+                except (OSError, subprocess.TimeoutExpired):
+                    pass
+                raise RuntimeError("the engine exited before it was ready" + (f" (see {log})" if log else "") +
+                                   start_failure_hint(log, log_start) + start_log_tail(log, log_start))
+            # (from PR #41, midhatn) a locally built engine can sit next to another release's BUILD.json: engines that
+            # report their own version (INFO engine=, 0.1.8+) win, the manifest stays the fallback for older ones
+            if self.info.get("engine"):
+                self.info["version"] = str(self.info["engine"])
+            self.ended = False                              # READY: alive from here (restart() set it True, #344)
+            # the engine's stdout on a thread, so a request can wait with a timeout (heartbeats, cancel checks)
+            self.lines: queue.Queue = queue.Queue()
+            self.pump = threading.Thread(target=self._pump, daemon=True)
+            self.pump.start()
+        except BaseException:
+            # __init__ may be interrupted before the caller receives this object.
+            # Reap the child here so a failed startup cannot leave a resident arena.
+            if self.proc is not None:
+                if self.proc.poll() is None:
+                    self.proc.terminate()
+                    try:
+                        self.proc.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        self.proc.kill()
+                        self.proc.wait(timeout=5)
                 self.proc.stdin.close()
                 self.proc.stdout.close()
-                if log:
-                    self.log.close()
-            except (OSError, subprocess.TimeoutExpired):
-                pass
-            raise RuntimeError("the engine exited before it was ready" + (f" (see {log})" if log else "") +
-                               start_failure_hint(log, log_start) + start_log_tail(log, log_start))
-        # (from PR #41, midhatn) a locally built engine can sit next to another release's BUILD.json: engines that
-        # report their own version (INFO engine=, 0.1.8+) win, the manifest stays the fallback for older ones
-        if self.info.get("engine"):
-            self.info["version"] = str(self.info["engine"])
-        self.ended = False                              # READY: alive from here (restart() set it True, #344)
-        # the engine's stdout on a thread, so a request can wait with a timeout (heartbeats, cancel checks)
-        self.lines: queue.Queue = queue.Queue()
-        self.pump = threading.Thread(target=self._pump, daemon=True)
-        self.pump.start()
+            if self.log not in (None, subprocess.DEVNULL):
+                self.log.close()
+            self.ended = True
+            raise
+        finally:
+            loading.set()
 
     def _pump(self):
         proc, lines = self.proc, self.lines             # this process's: a restart replaces both (#344)
@@ -485,7 +505,7 @@ class StrataEngine:
         # setup's calibration (tools/calibrate.py): engine settings for this request only, measured without a restart
         tune = sampling.get("strata_tune")
         if isinstance(tune, dict):
-            for k in ("pcie_frac", "spec_min_p"):
+            for k in ("pcie_frac", "spec_min_p", "no_mtp", "ignore_eos"):
                 v = tune.get(k)
                 if isinstance(v, (int, float)) and not isinstance(v, bool) and 0.0 <= float(v) <= 1.0:
                     keys += f" {k}={float(v)!r}"
@@ -2852,7 +2872,7 @@ def main() -> int:
     ap.add_argument("--mcp-config", help="a JSON file with MCP servers in Claude Desktop's format ({\"mcpServers\": "
                                          "{...}}); the web app's chat can use their tools (also \"mcp_servers\" in "
                                          "the config)")
-    ap.add_argument("--lazy", action="store_true", help="start the text-only API unloaded; load on first request")
+    ap.add_argument("--lazy", "--on-demand", action="store_true", help="start the text-only API unloaded; load on first request")
     ap.add_argument("--api-monitor", action="store_true",
                     help="the API request monitor at /api-monitor: keeps the last 100 requests' prompts and answers in "
                          "memory (also \"api_monitor\": true in the config; off by default)")

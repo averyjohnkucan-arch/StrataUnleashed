@@ -1,3 +1,4 @@
+#include "strata/kernels/kv_mixed.hpp"
 // src/kernels/cuda/qsa_decode_attn.cu - see include/strata/kernels/qsa_decode_attn.hpp.
 #include "strata/kernels/qsa_decode_attn.hpp"
 #include "strata/kernels/kv_q8.hpp"
@@ -70,7 +71,9 @@ __device__ __forceinline__ void load8_q4(const QsaAttnPools& p, bool value, long
 }
 template <int KV_MODE>
 __device__ __forceinline__ void load8(const QsaAttnPools& p, bool value, long long row, int d0, float* out) {
-    if constexpr (KV_MODE == 0) load8_f16(p, value, row, d0, out);
+    if constexpr (KV_MODE == 5) {
+        for(int i=0;i<8;++i) out[i]=kv_mixed_value(value?p.v_mixed:p.k_mixed,value?p.v_bits:p.k_bits,row,d0+i);
+    } else if constexpr (KV_MODE == 0) load8_f16(p, value, row, d0, out);
     else if constexpr (KV_MODE == 1) load8_q8(p, value, row, d0, out);
     else if constexpr (KV_MODE == 3) {
         // hybrid K8V4: both sides are defined - K unrotated INT8, V rotated Q4_0 - so a value=true call
@@ -158,7 +161,9 @@ __global__ void __launch_bounds__(THREADS) attn_chunk_kernel(const float* __rest
     for (int c = 0; c < n_here; ++c) {
         if (srow[c] < 0) continue;   // masked above, weight 0
         float v;
-        if constexpr (KV_MODE == 0) {
+        if constexpr (KV_MODE == 5) {
+            v=kv_mixed_value(p.v_mixed,p.v_bits,srow[c],t);
+        } else if constexpr (KV_MODE == 0) {
             v = __half2float(__ushort_as_half(p.v_pool[srow[c] * HD + t]));
         } else if constexpr (KV_MODE == 1) {
             const float sc = __half2float(__ushort_as_half(p.v_scale[srow[c] * (HD / KV_Q8_GROUP) + t / KV_Q8_GROUP]));
@@ -216,7 +221,7 @@ void qsa_decode_attn_batch(const float* q, const QsaAttnPools& pools, const int3
         std::fprintf(stderr, "qsa_decode_attn_batch: unsupported geometry or missing buffers\n");
         std::exit(1);
     }
-    const int kv_mode = pools.k_q4 != nullptr ? 2 : (pools.k_q != nullptr && pools.v_q4 != nullptr ? 3
+    const int kv_mode = pools.k_bits ? 5 : pools.k_q4 != nullptr ? 2 : (pools.k_q != nullptr && pools.v_q4 != nullptr ? 3
                         : (pools.k_q != nullptr ? 1 : 0));
     const int n_chunks = (int) ((cap + CHUNK - 1) / CHUNK);
     // per query: [acc: n_chunks*n_head*HD][m: n_chunks*n_head][l: n_chunks*n_head], all offsets from one stride
@@ -227,7 +232,9 @@ void qsa_decode_attn_batch(const float* q, const QsaAttnPools& pools, const int3
     const float scale = 1.0f / sqrtf((float) HD);
     const dim3 grid((unsigned) n_chunks, (unsigned) s.n_head_kv, (unsigned) n_q);
     cudaStream_t st = (cudaStream_t) stream;
-    if (kv_mode == 3)
+    if (kv_mode == 5)
+        attn_chunk_kernel<5><<<grid, THREADS, 0, st>>>(q, pools, ids, steps, (int)s.n_head_kv, (int)s.page_size, scale, part_acc, part_m, part_l, n_chunks, (int) cap, stride);
+    else if (kv_mode == 3)
         attn_chunk_kernel<3><<<grid, THREADS, 0, st>>>(q, pools, ids, steps, (int) s.n_head_kv, (int) s.page_size,
                                                         scale, part_acc, part_m, part_l, n_chunks, (int) cap, stride);
     else if (kv_mode == 2)
@@ -260,9 +267,9 @@ void qsa_decode_attn_step(const float* q, const QsaAttnPools& pools, const int32
         std::fprintf(stderr, "qsa_decode_attn: unsupported geometry or missing buffers\n");
         std::exit(1);
     }
-    const int kv_mode = pools.k_q4 != nullptr ? 2 : (pools.k_q != nullptr && pools.v_q4 != nullptr ? 3
+    const int kv_mode = pools.k_bits ? 5 : pools.k_q4 != nullptr ? 2 : (pools.k_q != nullptr && pools.v_q4 != nullptr ? 3
                         : (pools.k_q != nullptr ? 1 : 0));
-    if (kv_mode == 3 ? (!pools.k_scale || !pools.v_q4)
+    if (kv_mode == 5 ? (!pools.k_mixed || !pools.v_mixed) : kv_mode == 3 ? (!pools.k_scale || !pools.v_q4)
                      : (kv_mode == 2 ? (!pools.v_q4) : (kv_mode == 1 ? (!pools.v_q || !pools.k_scale || !pools.v_scale)
                                                                      : (!pools.k_pool || !pools.v_pool)))) {
         std::fprintf(stderr, "qsa_decode_attn: incomplete KV pools\n");
@@ -275,7 +282,9 @@ void qsa_decode_attn_step(const float* q, const QsaAttnPools& pools, const int32
     const float scale = 1.0f / sqrtf((float) HD);
     const dim3 grid((unsigned) n_chunks, (unsigned) s.n_head_kv);
     cudaStream_t st = (cudaStream_t) stream;
-    if (kv_mode == 3)
+    if (kv_mode == 5)
+        attn_chunk_kernel<5><<<grid, THREADS, 0, st>>>(q, pools, ids, step, (int)s.n_head_kv, (int)s.page_size, scale, part_acc, part_m, part_l, n_chunks);
+    else if (kv_mode == 3)
         attn_chunk_kernel<3><<<grid, THREADS, 0, st>>>(q, pools, ids, step, (int) s.n_head_kv, (int) s.page_size,
                                                         scale, part_acc, part_m, part_l, n_chunks);
     else if (kv_mode == 2)

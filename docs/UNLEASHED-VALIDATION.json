@@ -1,0 +1,107 @@
+{
+  "validated_utc": "2026-10-03T18:48:43.238652+00:00",
+  "model": "Qwen3.8-Flash-Next-AD-5.00bpw-Q5_K_M-M64 (33 shards)",
+  "gpu": "NVIDIA RTX 5000 Ada Generation Laptop GPU",
+  "vram_total_mib": 16376,
+  "cuda": "13.1",
+  "driver": "595.91.07",
+  "linux_build": "AVX2/FMA/F16C/BMI2, CUDA sm89; glibc 2.43 and GLIBCXX_3.4.32",
+  "selected": {
+    "kv": "FP16/FP16",
+    "workers": 23,
+    "prefill": 8192,
+    "reserve": 456,
+    "pcie": 0.10000000000000002,
+    "minp": 0.7,
+    "spec": 3
+  },
+  "short_512_512": {
+    "state": {
+      "kv": "FP16/FP16",
+      "workers": 23,
+      "prefill": 8192,
+      "reserve": 456,
+      "pcie": 0.10000000000000002,
+      "minp": 0.7,
+      "spec": 3
+    },
+    "decode": 51.64361868449985,
+    "prefill": 230.1283494708399,
+    "peak": 15844.0,
+    "valid": true
+  },
+  "long_8192_512": {
+    "state": {
+      "kv": "FP16/FP16",
+      "workers": 23,
+      "prefill": 8192,
+      "reserve": 456,
+      "pcie": 0.10000000000000002,
+      "minp": 0.7,
+      "spec": 3
+    },
+    "decode": 51.99817193926776,
+    "prefill": 1644.0198301989042,
+    "peak": 15844.0,
+    "valid": true
+  },
+  "decode_reference_tps": 53.3716942385673,
+  "decode_floor_tps": 48.03452481471057,
+  "decode_change_percent": -3.2378128120555627,
+  "peak_vram_mib": 15844.0,
+  "vram_limit_mib": 15864.0,
+  "extra_2048_mib_reservation_check": {
+    "state": {
+      "kv": "FP16/FP16",
+      "workers": 23,
+      "prefill": 512,
+      "reserve": 2504,
+      "pcie": 0.10000000000000002,
+      "minp": 0.7,
+      "spec": 3
+    },
+    "decode": 49.952565887471465,
+    "prefill": 231.5942390106814,
+    "peak": 13794.0,
+    "valid": true,
+    "reserve_vram_mib": 2048,
+    "safety_mib": 512,
+    "peak_limit_mib": 13816.0
+  },
+  "unit_tests": {
+    "pack-tests.log": 23,
+    "server-tests.log": 15,
+    "unleashed-tests.log": 16,
+    "ple-tests.log": 2
+  },
+  "gpu_tests": [
+    {
+      "test": "parity-mixed",
+      "code": 0
+    },
+    {
+      "test": "parity-formats",
+      "code": 0
+    },
+    {
+      "test": "parity-large",
+      "code": 0
+    },
+    {
+      "test": "parity-model-experts",
+      "code": 0
+    },
+    {
+      "test": "parity-model-ple",
+      "code": 0
+    }
+  ],
+  "http_modes": [
+    "selected configuration",
+    "no MTP head"
+  ],
+  "engine_sha256": "8002f567affaf3fea2f8113f8902d41cd7d87818fda6455020511187b0e99f9a",
+  "tuner_sha256": "a92ae327d1c8505adb0ba5525f8b5eafe5748a24a84ad7a3bd3a45b3967e58c2",
+  "windows_status": "Source/build package; Windows compilation and execution unavailable on this Linux host",
+  "limitations": "Exact native types and qwen4exp geometry limits are documented in UNLEASHED.md. PCIe link conditions varied during extended testing; fresh controls and final checks determine acceptance."
+}

@@ -1,3 +1,4 @@
+#include "strata/kernels/kv_mixed.hpp"
 // src/prefill/prefill.cpp - see include/strata/prefill/prefill.hpp.
 #include "strata/prefill/prefill.hpp"
 #include "strata/core/mtp.hpp"
@@ -1786,7 +1787,9 @@ bool Prefill::run(const int64_t* tokens, int64_t n, int64_t pos0, std::string& e
                             strata::kernels::fwht256_inplace_cuda(m.Kc, T * 2, m.cs);
                             strata::kernels::fwht256_inplace_cuda(m.Vc, T * 2, m.cs);
                         }
-                        if (st.kv_q4)
+                        if (st.k_bits)
+                            strata::kernels::kv_mixed_append(st.k_mixed,st.v_mixed,st.k_bits,st.v_bits,st.page_table,nullptr,p0,T,m.Kc,m.Vc,s,m.cs);
+                        else if (st.kv_q4)
                             strata::kernels::kv_append_q4(st.k_q4, st.v_q4, st.page_table, p0, T, m.Kc, m.Vc, s, m.cs,
                                                           &st.host, staged ? &m.stage : nullptr);
                         else

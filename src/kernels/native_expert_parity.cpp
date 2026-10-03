@@ -46,7 +46,8 @@ static double rel(const std::vector<float>& a, const std::vector<float>& b) {
 
 namespace {
 constexpr int NT = 3, E = 7;
-constexpr int64_t H = 2560, FF = 640;
+const int64_t H = std::getenv("STRATA_PARITY_H") ? std::atoll(std::getenv("STRATA_PARITY_H")) : 2560;
+const int64_t FF = std::getenv("STRATA_PARITY_FF") ? std::atoll(std::getenv("STRATA_PARITY_FF")) : 640;
 
 // The three ways and the dequantizers for one expert blob; returns the number of failed checks.
 int check_blob(const cpu::NativeFmt& f, const std::vector<uint8_t>& blob, int seed, const std::string& label,

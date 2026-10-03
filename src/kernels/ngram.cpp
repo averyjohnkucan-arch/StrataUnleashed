@@ -139,6 +139,9 @@ struct PleTable::Impl {
     GgufFile* file = nullptr;
     const uint8_t* data = nullptr;
     uint64_t n_rows = 0;
+    int extra_type = -1; // Q4_0/Q4_1, F16/BF16/F32 rows
+    bool q8_0 = false;
+    bool q5_1 = false;
     bool q5_0 = false;                // #296: Q5_0 rows (110 B), the mapped reader only
     mutable uint64_t bytes_read = 0;
     // Direct mode (plan v0.3 P2): the mapping above is released after the header parse and every row comes
@@ -154,9 +157,23 @@ struct PleTable::Impl {
     float scale = 1.0f;               // the FP8 table's one scale
     uint32_t rb = PLE_ROW_BYTES;      // bytes per row
     void decode(const uint8_t* row, float* out160) const {
-        if (fp8) fp8_e4m3_dequant_row(row, scale, out160);
+        if (extra_type >= 0) {
+            for (int i=0;i<PLE_HEAD_DIM;++i) {
+                if (extra_type==0) std::memcpy(out160+i,row+4*i,4);
+                else if(extra_type==1) out160[i]=strata::fp16_to_fp32(strata::read_u16(row+2*i));
+                else if(extra_type==30) {uint32_t b=(uint32_t)strata::read_u16(row+2*i)<<16;std::memcpy(out160+i,&b,4);}
+                else {const int stride=extra_type==2?18:20;const uint8_t* b=row+(i/32)*stride;
+                    float d=strata::fp16_to_fp32(strata::read_u16(b));float m=extra_type==3?strata::fp16_to_fp32(strata::read_u16(b+2)):0;
+                    int j=i%32;uint8_t q=b[(extra_type==2?2:4)+j%16];int code=j<16?q&15:q>>4;
+                    out160[i]=d*(code-(extra_type==2?8:0))+m;}
+            }
+        } else if (fp8) fp8_e4m3_dequant_row(row, scale, out160);
+        else if (q5_1)
+            for (int b = 0; b < PLE_HEAD_DIM / 32; ++b) strata::dequantize_q5_1(row + (size_t)b * 24, out160 + b * 32);
         else if (q5_0)
             for (int b = 0; b < PLE_HEAD_DIM / 32; ++b) strata::dequantize_q5_0(row + (size_t) b * 22, out160 + b * 32);
+        else if (q8_0)
+            for (int b = 0; b < PLE_HEAD_DIM / 32; ++b) strata::dequantize_q8_0(row + (size_t) b * 34, out160 + b * 32);
         else iq4nl_dequant_row(row, out160);
     }
 };
@@ -191,8 +208,15 @@ bool PleTable::open(const std::string& gguf_path, std::string& err, const PleIoO
     // IQ4_NL (ISTA-DASLab's shard 2, the original's own GGUF), Q5_0 (#296: OrcaRouter's GGUF), or the FP8 table as
     // shipped: I8 bytes marked strata.ple.format = f8_e4m3 with strata.ple.scale (tools/ple_fp8_pack.py)
     impl_->fp8 = false;
+    impl_->q8_0 = std::strcmp(t->type_name(), "Q8_0") == 0;
+    impl_->q5_1 = std::strcmp(t->type_name(), "Q5_1") == 0;
     impl_->q5_0 = std::strcmp(t->type_name(), "Q5_0") == 0;
-    impl_->rb = impl_->q5_0 ? (PLE_HEAD_DIM / 32) * 22 : PLE_ROW_BYTES;
+    impl_->rb = impl_->q5_1 ? (PLE_HEAD_DIM / 32) * 24 : impl_->q8_0 ? (PLE_HEAD_DIM / 32) * 34 : impl_->q5_0 ? (PLE_HEAD_DIM / 32) * 22 : PLE_ROW_BYTES;
+    impl_->extra_type = (t->type==0 || t->type==1 || t->type==2 || t->type==3 || t->type==30) ? (int)t->type : -1;
+    if (impl_->extra_type>=0) {
+        const int sizes[]={4,2,18,20};
+        impl_->rb=t->type==30?PLE_HEAD_DIM*2:t->type<=1?PLE_HEAD_DIM*sizes[t->type]:(PLE_HEAD_DIM/32)*sizes[t->type];
+    }
     if (std::strcmp(t->type_name(), "I8") == 0) {
         const MetaValue* f = impl_->file->get("strata.ple.format");
         const MetaValue* s = impl_->file->get("strata.ple.scale");
@@ -204,8 +228,8 @@ bool PleTable::open(const std::string& gguf_path, std::string& err, const PleIoO
         impl_->fp8 = true;
         impl_->scale = (float) s->num();
         impl_->rb = PLE_ROW_BYTES_FP8;
-    } else if (!impl_->q5_0 && std::strcmp(t->type_name(), "IQ4_NL") != 0) {
-        err = std::string("per_layer_token_embd.weight is ") + t->type_name() + ", not IQ4_NL, Q5_0 or FP8 (I8)";
+    } else if (impl_->extra_type<0 && !impl_->q5_0 && !impl_->q5_1 && !impl_->q8_0 && std::strcmp(t->type_name(), "IQ4_NL") != 0) {
+        err = std::string("per_layer_token_embd.weight is ") + t->type_name() + ", not F32, F16, BF16, Q4_0, Q4_1, IQ4_NL, Q5_0, Q5_1, Q8_0 or FP8 (I8)";
         close();
         return false;
     }
@@ -223,10 +247,20 @@ bool PleTable::open(const std::string& gguf_path, std::string& err, const PleIoO
     // assumed.  A wrong data offset would leave a different remainder.
     // A shard may hold other tensors too (Swift 1.5's shard 1 holds layers 0-12 and the table): the table must
     // then fit inside the file at its own offset; alone in its shard (the original's shard 2) it fills it exactly.
+    if (!impl_->n_rows || impl_->n_rows > UINT64_MAX / impl_->rb) {
+        err = "PLE table row count is empty or overflows its byte count";
+        close();
+        return false;
+    }
     const uint64_t need = impl_->n_rows * (uint64_t) impl_->rb;
     const uint64_t have = impl_->file->file_size() - impl_->file->data_start();
     const bool alone = impl_->file->tensors().size() == 1;
-    if (alone ? need != have : t->offset + need > have) {
+    // GGUF writers may pad the last tensor to general.alignment. Accept precisely that
+    // padding, while still rejecting a truncated tensor or an unrelated trailing payload.
+    const uint64_t end = t->offset + need;
+    const uint64_t align = impl_->file->alignment();
+    const uint64_t padded = align && end <= UINT64_MAX - (align - 1) ? (end + align - 1) / align * align : end;
+    if (t->offset > have || need > have - t->offset || (alone && have != end && have != padded)) {
         char buf[256];
         std::snprintf(buf, sizeof buf,
                       "PLE table size mismatch: %llu rows x %d B = %llu at offset %llu, but the file holds %llu from "
@@ -286,12 +320,17 @@ void PleTable::close() {
     impl_->n_rows = 0;
     impl_->rb = PLE_ROW_BYTES;
     impl_->q5_0 = false;
+    impl_->q5_1 = false;
+    impl_->extra_type = -1;
+    impl_->q8_0 = false;
     impl_->fp8 = false;
 }
 
 bool PleTable::is_open() const { return impl_->data != nullptr || impl_->reader.is_open(); }
 bool PleTable::locked() const { return impl_->locked; }
-const char* PleTable::format() const { return impl_->fp8 ? "F8_E4M3" : impl_->q5_0 ? "Q5_0" : "IQ4_NL"; }
+const char* PleTable::format() const {
+    if(impl_->extra_type>=0) {switch(impl_->extra_type){case 0:return "F32";case 1:return "F16";case 2:return "Q4_0";case 3:return "Q4_1";case 30:return "BF16";}}
+    return impl_->q5_1 ? "Q5_1" : impl_->fp8 ? "F8_E4M3" : impl_->q8_0 ? "Q8_0" : impl_->q5_0 ? "Q5_0" : "IQ4_NL"; }
 PleIo PleTable::mode() const { return impl_->mode; }
 uint64_t PleTable::rows() const { return impl_->n_rows; }
 uint64_t PleTable::bytes_read() const { return impl_->bytes_read; }

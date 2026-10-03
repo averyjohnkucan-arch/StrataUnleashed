@@ -1,0 +1,4 @@
+The llama.cpp/ggml, gguf-py and cmake source directories were copied read-only from the existing SSD Strata/third_party/llama.cpp checkout.
+Source checkout HEAD: 30ec18ec7094550fcc594fd948220d511d80464e
+The release manifest hashes every bundled source file, including any local differences.
+Original licenses are retained in llama.cpp/LICENSE and component directories.

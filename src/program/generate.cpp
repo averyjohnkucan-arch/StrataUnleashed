@@ -450,6 +450,8 @@ void usage() {
                  "  --ple-inflight N     outstanding SSD reads (default 256)\n"
                  "  --ple-delay-us U     fault injection: each row read completes no earlier than U us\n"
                  "  --ple-sync-submit    A/B arm: submit table reads on the token thread (default: an I/O thread)\n"
+                 "  --kv FP16/FP16|FP16/Q8|Q8/Q8|Q8/Q5|Q5/Q5|Q5/Q4|Q4/Q4\n"
+                 "                       independent main-model K/V precision; mixed modes require resident KV\n"
                  "  --kv fp16|int8       KV storage (plan v0.3 P7): int8 codes + fp16 scale per 64 values, half the\n"
                  "                       VRAM; default fp16 until gate G-C accepts int8\n"
                  "  --kv q4_0            4-bit K/V after a Hadamard rotation (PR #21): half of int8's memory,\n"
@@ -1216,6 +1218,7 @@ int main(int argc, char** argv) {
         else if (a == "--spec") o.spec = std::atoi(next("--spec"));
         else if (a == "--spec-oracle") o.spec_oracle = next("--spec-oracle");
         else if (a == "--spec-corrupt") o.spec_corrupt = std::atoi(next("--spec-corrupt"));
+        else if (a == "--no-mtp") { o.mtp.clear(); o.spec=0; }
         else if (a == "--mtp") o.mtp = next("--mtp");
         else if (a == "--mtp-window") o.mtp_window = std::atoll(next("--mtp-window"));
         else if (a == "--pcie-frac") o.pcie_frac = std::atof(next("--pcie-frac"));
@@ -1559,9 +1562,22 @@ int main(int argc, char** argv) {
         return 2;
     }
 #endif
+    int mixed_k=0,mixed_v=0;
+    if (o.kv == "FP16/FP16" || o.kv == "fp16/fp16") o.kv="fp16";
+    else if (o.kv == "Q8/Q8" || o.kv == "q8/q8") o.kv="int8";
+    else if (o.kv == "Q4/Q4" || o.kv == "q4/q4") o.kv="q4_0";
+    else if (o.kv == "FP16/Q8" || o.kv == "fp16/q8") { mixed_k=16; mixed_v=8; }
+    else if (o.kv == "Q8/Q5" || o.kv == "q8/q5") { mixed_k=8; mixed_v=5; }
+    else if (o.kv == "Q5/Q5" || o.kv == "q5/q5") { mixed_k=5; mixed_v=5; }
+    else if (o.kv == "Q5/Q4" || o.kv == "q5/q4") { mixed_k=5; mixed_v=4; }
+    strata::core::qsa_set_kv_mixed(mixed_k,mixed_v);
+    if (mixed_k && (o.kv_resident > 0 || o.conversation_cache_mib > 0)) {
+        std::fprintf(stderr,"strata: mixed KV currently requires resident KV and no parked conversation cache\n");
+        return 2;
+    }
     if (o.kv == "q4") o.kv = "q4_0";
-    if (o.kv != "fp16" && o.kv != "int8" && o.kv != "q4_0" && o.kv != "k8v4") {
-        std::fprintf(stderr, "strata generate: --kv must be fp16, int8, q4_0 or k8v4\n");
+    if (!mixed_k && o.kv != "fp16" && o.kv != "int8" && o.kv != "q4_0" && o.kv != "k8v4") {
+        std::fprintf(stderr, "strata generate: --kv must be fp16, int8, q4_0, k8v4, FP16/FP16, FP16/Q8, Q8/Q8, Q8/Q5, Q5/Q5, Q5/Q4 or Q4/Q4\n");
         return 2;
     }
     strata::core::qsa_set_kv_int8(o.kv == "int8");
@@ -1585,6 +1601,12 @@ int main(int argc, char** argv) {
     // Prompt lookup (the suffix drafter, on by default): the MTP keeps its --spec windows and a lookup window may be
     // up to 2 tokens longer; the draft policy (strata/spec/draft_policy.hpp) takes one only where it pays. Code
     // edits +6-11%, ordinary text unchanged (bench/results/2026-09-27-spec). --suffix-draft 0 turns it off.
+    if (o.serve && (o.mtp.empty() || o.spec < 2)) {
+        o.mtp.clear();
+        o.spec = 2; // allocate the existing verifier; execute one-token windows
+        o.suffix_draft = 0;
+        o.conversation_cache_mib = 0;
+    }
     if (o.suffix_draft > 0 && o.spec >= 2 && o.mtp_max_t == 0) {
         o.mtp_max_t = o.spec;
         o.spec = std::min(o.spec + 2, 8);   // kVerifyMaxT
@@ -4084,9 +4106,9 @@ int main(int argc, char** argv) {
         }
     }
     if (o.serve) {
-        if (o.spec < 2 || o.mtp.empty() || o.prefill_chunk <= 0 ||
+        if (o.prefill_chunk <= 0 ||
             (graph_hits && (thits.d_res == nullptr || host_res.empty()))) {
-            std::fprintf(stderr, "strata serve: needs --spec T, --mtp DIR and --prefill CHUNK (and a fillable "
+            std::fprintf(stderr, "strata serve: needs --prefill CHUNK (and a fillable "
                                  "--expert-cache; the graphed hit path additionally needs --expert-profile P)\n");
             return 2;
         }
@@ -4523,7 +4545,7 @@ int main(int argc, char** argv) {
             std::fprintf(stderr, "strata serve: layer split: layers %s, one hand-off per window\n", plan_s.c_str());
         }
         if (!ver.init(wt, g, ss, vh, native_head.loaded() ? &native_head : nullptr, o.spec, err) ||
-            !mtp.bind(last_st ? last_st->wt : wt, last_st ? &last_st->head : &native_head, ver.final_R_all(), err)) {
+            (!o.mtp.empty() && !mtp.bind(last_st ? last_st->wt : wt, last_st ? &last_st->head : &native_head, ver.final_R_all(), err))) {
             std::fprintf(stderr, "strata serve: %s\n", err.c_str());
             return 1;
         }
@@ -4687,7 +4709,7 @@ int main(int argc, char** argv) {
             std::vector<int32_t> nxt((size_t) T);
             for (int64_t t = 0; t < T; ++t) nxt[(size_t) t] = (int32_t) cur[(size_t) (p0 + t + 1)];
             // E-9: batched through the prompt path when it can (one GPU: a layer split's drafter is on the last stage)
-            const bool batched = !multi_gpu && sp.draft_kv(mtp, R_rows, nxt.data(), T, p0, e);
+            const bool batched = o.mtp.empty() || (!multi_gpu && sp.draft_kv(mtp, R_rows, nxt.data(), T, p0, e));
             if (!e.empty() || (!batched && !mtp.prefill(R_rows, nxt.data(), T, p0, e))) return false;
             if (std::getenv("STRATA_SNAPSHOT_VERIFY") != nullptr)
                 std::fprintf(stderr, "strata serve: DRAFT_PREFILL path=%s mode=%d cells=%lld\n",
@@ -5076,6 +5098,8 @@ int main(int argc, char** argv) {
             // tuning keys (setup's calibration measures settings without restarting the engine): the PCIe share of
             // the missed experts and the draft-probability floor, for this request only
             double req_pcie_frac = o.pcie_frac, req_spec_min_p = o.spec_min_p;
+            bool req_ignore_eos = false;
+            bool req_no_mtp = o.mtp.empty(); // Measurement arm: one-token verify windows, no draft computation.
             if (endp != nullptr) {   // GENI takes the same keys (#75: image requests were always greedy); its
                                      // embedding file path is the first token without an =
                 for (;;) {
@@ -5098,6 +5122,8 @@ int main(int argc, char** argv) {
                     else if (key == "penalty_freq") req_penalty_freq = fv;
                     else if (key == "penalty_present") req_penalty_present = fv;
                     else if (key == "seed") req_seed = std::strtoull(tok.c_str() + eq + 1, nullptr, 10);
+                    else if (key == "ignore_eos") req_ignore_eos = fv != 0.0f;
+                    else if (key == "no_mtp") req_no_mtp = o.mtp.empty() || fv != 0.0f;
                     else if (key == "pcie_frac") req_pcie_frac = std::clamp((double) fv, 0.0, 1.0);
                     else if (key == "spec_min_p") req_spec_min_p = std::clamp((double) fv, 0.0, 1.0);
                     // unknown keys are skipped: the ids start at the first token without '='
@@ -5368,7 +5394,7 @@ int main(int argc, char** argv) {
             }
             // KV streaming: the drafter's ring may hold cells past `resume` from a longer turn; the main layers'
             // host copies and slots are always current (every writer writes both), so they need nothing
-            if (resume > 0 && reread_to <= 0) mtp.kv_restore(resume);
+            if (!o.mtp.empty() && resume > 0 && reread_to <= 0) mtp.kv_restore(resume);
             tr("request", n, geni ? 1 : 0);
             mtp.set_prompt_len(n);
             const int64_t read_from = reread_to > 0 ? 0 : resume;
@@ -5439,7 +5465,7 @@ int main(int argc, char** argv) {
                     }();
                     if (logpos != nullptr && !ver.window_logprobs(nxt.data(), T, q, logpos_extra, logpos, e))
                         return false;
-                    if (!ver.commit(T, e) || !mtp.prefill(ver.final_R_all(), nxt.data(), T, q, e)) return false;
+                    if (!ver.commit(T, e) || (!o.mtp.empty() && !mtp.prefill(ver.final_R_all(), nxt.data(), T, q, e))) return false;
                     q += T;
                     pp_reached = q;   // #471
                 }
@@ -5705,12 +5731,12 @@ int main(int argc, char** argv) {
                     T = 1;
                     while (T < S_mtp && dprob[(size_t) T - 1] >= (float) req_spec_min_p) ++T;
                 }
-                if (first_window) T = 1;
+                if (first_window || req_no_mtp) T = 1;
                 // a repeat of earlier context (prompt lookup) where the MTP's own first guess agrees: the policy takes it
                 // when its expected tokens per ms, from the measured acceptance and window costs, beat the MTP window's
                 bool from_sfx = false;
                 int sfx_match = 0;
-                if (o.suffix_draft > 0 && !first_window) {
+                if (o.suffix_draft > 0 && !first_window && !req_no_mtp) {
                     const int k = sfx.propose(S - 1, sbuf.data());
                     sfx_match = sfx.last_match();
                     if (k > 0 && sbuf[0] == drafts[0]) {
@@ -5771,16 +5797,16 @@ int main(int argc, char** argv) {
                     strata::core::progress_beat();
                     ++produced_n;
                     if (o.suffix_draft > 0) sfx.append(outv[(size_t) i]);
-                    eos = std::find(o.eos_ids.begin(), o.eos_ids.end(), (int64_t) outv[(size_t) i]) != o.eos_ids.end();
+                    eos = !req_ignore_eos && std::find(o.eos_ids.begin(), o.eos_ids.end(), (int64_t) outv[(size_t) i]) != o.eos_ids.end();
                 }
                 std::fflush(stdout);
                 ++rounds;
                 const Clock::time_point tw2 = Clock::now();
                 // coupled drafts with penalties: the next window's row-0 history (`consumed` holds this window's
                 // commit, outv[a] is its row 0) - the drafts extend it on the device as the verify rows will
-                if (hist_n > 0 && mtp.coupled() && !eos && produced_n < max_new)
+                if (!req_no_mtp && hist_n > 0 && mtp.coupled() && !eos && produced_n < max_new)
                     mtp.set_draft_history(consumed.data(), (int64_t) consumed.size(), outv[(size_t) a]);
-                const bool drafted = eos || produced_n >= max_new ||
+                const bool drafted = req_no_mtp || eos || produced_n >= max_new ||
                                      mtp.draft(T, outv.data(), p, a, drafts.data(), err, dprob.data(), (float) req_spec_min_p);
                 {
                     const Clock::time_point tw3 = Clock::now();
