@@ -88,3 +88,24 @@ def kv_cache_bytes(context, pair):
         bits = [16 if side == "FP16" else int(side[1:]) for side in pair.split("/")]
         per_head = sum(512 if b == 16 else 8 * (2 + 4 * b) for b in bits)
     return context * 12 * 2 * per_head
+
+
+def reservation_mib(value):
+    """Parse explicit SI/binary units; unsuffixed values retain the CLI's MiB unit."""
+    import re
+    from decimal import Decimal, ROUND_CEILING
+
+    match = re.fullmatch(
+        r"([0-9]+(?:\.[0-9]+)?)\s*(mib|gib|mb|gb)?", str(value).strip(), re.I
+    )
+    if not match:
+        raise ValueError(
+            "Use a nonnegative amount, e.g. 4096, 4096 MiB, 4 GiB or 4096 MB"
+        )
+    amount, unit = match.groups()
+    scale = {"mib": 1024**2, "gib": 1024**3, "mb": 1000**2, "gb": 1000**3}[
+        unit.lower() if unit else "mib"
+    ]
+    return int(
+        (Decimal(amount) * scale / (1024**2)).to_integral_value(rounding=ROUND_CEILING)
+    )

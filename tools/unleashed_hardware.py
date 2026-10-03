@@ -175,14 +175,6 @@ def assess(
     kv_bytes = kv_cache_bytes(context, pair)
     vram_need = ins["gpu_dense_bytes"] + kv_bytes + 2 * GIB
     ram_budget = max(0, system["ram_available"] - reserve_ram_mib * MIB)
-    if ram_need > system["ram_total"]:
-        resource_reasons.append(
-            f'Estimated resident RAM need {ram_need / GIB:.1f} GiB exceeds installed {system["ram_total"] / GIB:.1f} GiB'
-        )
-    elif ram_need > ram_budget:
-        resource_reasons.append(
-            f"Estimated RAM need {ram_need / GIB:.1f} GiB exceeds {ram_budget / GIB:.1f} GiB currently available after reserving {reserve_ram_mib / 1024:.1f} GiB for other apps; close other apps or choose a smaller model"
-        )
     if disk_need > system["disk_free"]:
         resource_reasons.append(
             f'Need about {disk_need / GIB:.1f} GiB more disk space; {system["disk_free"] / GIB:.1f} GiB free'
@@ -191,10 +183,6 @@ def assess(
     if gpu:
         safety = max(512, int(gpu["total_mib"] * 0.02 + 0.999))
         budget = (gpu["free_mib"] - reserve_mib - safety) * MIB
-        if budget < vram_need:
-            resource_reasons.append(
-                f"Estimated startup VRAM {vram_need / GIB:.1f} GiB exceeds {max(0,budget) / GIB:.1f} GiB available after reservation/headroom"
-            )
     needs_build = not system.get("engine_runs", False)
     if gpu and system.get("engine_runs"):
         local_build = gpu["name"] in system.get("engine_built_for", "")
@@ -219,7 +207,7 @@ def assess(
                 "The engine will be built locally for this machine before tuning"
             )
     warnings.append(
-        "RAM/VRAM estimates include working-memory allowances; measured tuning checks fit and speed"
+        "RAM/VRAM estimates are informational; the engine attempts the model and tuning honors your reservations"
     )
     return {
         "status": "cannot-run-now" if blocked or resource_reasons else "candidate",

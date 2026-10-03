@@ -38,7 +38,7 @@ Prefer to download a ZIP or tar file yourself? [Get the latest release](https://
 | Unsloth | Larger quants if you want them. Not the first recommendation; don't expect a big jump just from a larger quant. |
 | HuiHui | For uncensored chat. Abliterated models. |
 
-There are **19 supported model/quant options**. Setup shows download size, SSD engram table, CPU memory and GPU memory, largest RAM footprint first. Over-budget choices remain selectable; unsupported encodings are hidden. All estimates use FP16/Q8 KV at 262,144 context. [Model list](docs/MODELS.md) · [Memory breakdown and measurements](docs/MEMORY.md).
+There are **19 supported model/quant options**. Setup shows download size, SSD engram table, CPU memory and GPU memory, largest RAM footprint first. Memory estimates never block selection or launch; unsupported encodings are hidden. All estimates use FP16/Q8 KV at 262,144 context. [Model list](docs/MODELS.md) · [Memory breakdown and measurements](docs/MEMORY.md).
 
 Setup checks your drive and read speed too. **NVMe is recommended.** Other drives get an “experience may vary” warning. Slow storage can mean slower loading and inference.
 
@@ -76,13 +76,13 @@ These are **KV cache** settings, separate from model weight quantization. The tu
 
 ## Leave room for other apps
 
-Setup asks how much extra **VRAM and system RAM** to leave available for other applications. Enter each amount in MiB (1024 MiB = 1 GiB). For example:
+Setup asks how much extra **VRAM and system RAM** to leave available for other applications. Enter a bare MiB amount or an explicit unit, such as `4096 MiB` or `4 GiB`. Each prompt echoes the amount to leave free. For example:
 
 ```bash
 ./cli-unleashed.sh --reserve-vram-mib 2048 --reserve-ram-mib 8192
 ```
 
-This requests 2 GiB of extra VRAM headroom and 8 GiB of available system RAM. RAM reservation reduces the model-selection budget and rejects tuning trials that dip below it. Selecting an over-budget model overrides the estimate check, while measured tuning limits still apply. It is a headroom target, not an operating-system memory lock; other applications can still consume memory. VRAM safety headroom remains separate. Tuning first optimizes short-prompt generation, then prompt processing while keeping at least 90% of the measured generation speed. Later starts reuse a matching tuning result.
+This requests 2 GiB of extra VRAM headroom and 8 GiB of available system RAM. Memory estimates do not reject models. Tuning rejects measured trials that violate your requested free-memory reservation. It is a headroom target, not an operating-system memory lock; other applications can still consume memory. VRAM safety headroom remains separate. Tuning first optimizes short-prompt generation, then prompt processing while keeping at least 90% of the measured generation speed. Later starts reuse a matching tuning result.
 
 ## Testing
 

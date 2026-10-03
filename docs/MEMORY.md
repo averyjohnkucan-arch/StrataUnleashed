@@ -40,7 +40,7 @@ Derived from tensor headers in the [pinned catalog](../data/unleashed-models.jso
 | ista/Q2_0 | 61.86 | 26.82 | 31.64 | 0.25 | 37.90 | 9.73 |
 | ista-coder/IQ1_M | 54.40 | 26.82 | 23.42 | 0.31 | 29.73 | 10.42 |
 
-*GPU expert caching grows into spare VRAM during tuning; GPU MEM is a startup planning estimate, not the final VRAM target. Rows appear in descending CPU MEM order. Over-budget rows are struck through in supporting terminals and remain selectable. Redirected output uses an explicit status instead. Selecting one attempts setup despite the estimate; actual allocation failures and measured reservation checks still apply. The direct launcher provides `--allow-over-budget` for the same estimate override. Unsupported encodings stay hidden and cannot be selected.
+*GPU expert caching grows into spare VRAM during tuning; GPU MEM is a startup planning estimate, not the final VRAM target. Rows appear in descending CPU MEM order. RAM/VRAM estimates never block selection, preparation or launch, and do not produce memory-based strikethroughs. Actual allocation failures and measured reservation checks still apply. The legacy `--allow-over-budget` flag is accepted but no longer needed. Unsupported encodings stay hidden and cannot be selected.
 
 ## Atomic Q5: corrected example and measurement
 

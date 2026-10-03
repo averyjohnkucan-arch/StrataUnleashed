@@ -2,7 +2,7 @@
 
 ## Model selection, verified downloads and per-machine inference tuning
 
-**Engineering note · release 0.1.38-r5 · 3 October 2026**
+**Engineering note · release 0.1.38-r6 · 3 October 2026**
 
 This note describes the Unleashed fork's installation and tuning workflow. It is not a peer-reviewed paper or a replacement for the original Strata paper. Engine architecture and upstream contributions remain attributed to Strata and its dependencies.
 
@@ -32,7 +32,7 @@ The scanner reads the operating system, CPU, installed and available RAM, free d
 
 CPU planning uses host expert bytes plus host token embedding plus a 6 GiB runtime allowance. PLE/engram tables are SSD-backed; dense GPU weights are counted once, on the GPU. The GPU expert cache retains host copies in the default arena mode. The table uses FP16/Q8 at 262,144 context: 4.59375 GiB main KV, GPU dense bytes and 2 GiB workspace before expert caching. Full per-model derivations and source evidence are in docs/MEMORY.md.
 
-Supported choices are sorted by descending CPU footprint. Over-budget rows are struck through in supporting terminals and remain selectable; selecting them overrides estimated admission checks but not measured tuning reservations. Unsupported encodings are hidden. Atomic Q5 now budgets 53.797 GiB CPU memory instead of 79.3 GiB. A short 512/512 run with FP16/FP16 KV measured 50.00 GiB peak engine RSS. A 261,624/512 run with FP16/Q8 measured 50.07 GiB. Both preallocated the full 262,144-token context before expert-cache sizing. These single Linux samples support the planning allowance but do not establish minimum installed RAM on all systems. See docs/UNLEASHED-MEMORY-VALIDATION.json.
+Supported choices are sorted by descending CPU footprint. RAM/VRAM estimates never reject or strike through model choices. Requested reservations are enforced against measured tuning trials. Unsupported encodings are hidden. Atomic Q5 now budgets 53.797 GiB CPU memory instead of 79.3 GiB. A short 512/512 run with FP16/FP16 KV measured 50.00 GiB peak engine RSS. A 261,624/512 run with FP16/Q8 measured 50.07 GiB. Both preallocated the full 262,144-token context before expert-cache sizing. These single Linux samples support the planning allowance but do not establish minimum installed RAM on all systems. See docs/UNLEASHED-MEMORY-VALIDATION.json.
 
 Drive identification is performed on the volume actually containing the app or selected model. Linux follows the mounted block device to its parent transport; Windows queries the partition's disk bus. NVMe is reported only when identified as such. SATA, USB, rotational and unknown storage receive an experience-may-vary notice.
 
@@ -44,7 +44,7 @@ The measured memory limit is total device memory minus the user's additional res
 
 The KV default is FP16/FP16 for nominal 16 GiB or larger cards, FP16/Q8 for 12–16 GiB, Q8/Q8 for 8–12 GiB, and Q8/Q6 below 8 GiB. Driver-reported capacity may be up to 64 MiB below a nominal tier. Users may explicitly override this with --kv; the tuner does not change cache precision automatically.
 
-System RAM headroom is selected separately in the interactive setup or through --reserve-ram-mib. It reduces the model-fit budget, is rechecked against current available RAM before launch unless the estimate is explicitly overridden, and enters the tuning fingerprint. Trials whose sampled available RAM falls below the reserve are rejected. This is admission control and measured headroom, not an OS memory lock or a hard cap on later inference.
+System RAM headroom is selected separately in the interactive setup or through --reserve-ram-mib. It enters the tuning fingerprint without a model-size admission check. Trials whose sampled available RAM falls below the reserve are rejected. This is measured headroom, not an OS memory lock or a hard cap on later inference.
 
 The first objective is generation throughput on two 512-input/512-output workloads. The search fixes K/V precision to the GPU-capacity default (or an explicit override), and considers optional MTP settings, CPU workers, uncached-expert PCIe share and other existing runtime controls. Fresh incumbent controls and repeated comparisons reduce the risk that temperature, clocks or link-state changes make an old measurement dominate subsequent choices.
 

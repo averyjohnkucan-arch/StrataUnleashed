@@ -61,6 +61,19 @@ def ask_int(message, default, low, high):
         print(f"Enter a whole number from {low} to {high}.")
 
 
+def ask_memory(message, default):
+    from tools.unleashed_policy import reservation_mib
+
+    while True:
+        value = input(f"{message} [default {default} MiB]: ").strip()
+        try:
+            mib = reservation_mib(value) if value else default
+            print(f"{message}: {mib} MiB ({mib / 1024:.3f} GiB) to leave free.")
+            return mib
+        except ValueError as exc:
+            print(exc)
+
+
 def port_available(port):
     with socket.socket() as sock:
         try:
@@ -145,12 +158,12 @@ def show_models(rows, intent):
         e, fit = row["model"], row["assessment"]
         over = bool(fit.get("resource_reasons"))
         status = (
-            "Over budget; selectable"
+            "Disk space warning; selectable"
             if over
             else (
                 "Setup needed"
                 if fit.get("blocking_reasons")
-                else "Recommended" if e["id"] == best else "Fits estimate"
+                else "Recommended" if e["id"] == best else "Available"
             )
         )
         line = (
@@ -173,7 +186,7 @@ def show_models(rows, intent):
         "The GPU cache uses spare VRAM; in this mode its host expert copies remain in RAM."
     )
     print(
-        "Planning estimates vary by workload. Over-budget rows remain selectable. Run KV uses the card-capacity default or your --kv override."
+        "Memory estimates are informational and never block selection or launch. Run KV uses the card-capacity default or your --kv override."
     )
     if intent == "uncensored" and not recs:
         print(
@@ -289,7 +302,7 @@ def main(argv=None):
     ap.add_argument(
         "--allow-over-budget",
         action="store_true",
-        help="Attempt a supported model despite resource estimates",
+        help="Compatibility option; memory estimates no longer block launch",
     )
     ap.add_argument("--tune-only", action="store_true")
     ap.add_argument("--download-only", action="store_true")
@@ -367,14 +380,15 @@ def main(argv=None):
                 a.gpu = ask_int("GPU index", a.gpu, min(choices), max(choices))
                 if a.gpu in choices:
                     break
-        a.reserve_vram_mib = ask_int(
-            "Extra VRAM to reserve for other apps (MiB)", a.reserve_vram_mib, 0, 1048576
+        print("Reserve memory to leave free, not memory to allocate to the model.")
+        print(
+            "Bare numbers mean MiB; units accepted: MiB, GiB, MB, GB. MB/GB are decimal."
         )
-        a.reserve_ram_mib = ask_int(
-            "Extra system RAM to reserve for other apps (MiB; 1024 = 1 GiB)",
-            a.reserve_ram_mib,
-            0,
-            system["ram_total"] // (1024**2),
+        a.reserve_vram_mib = ask_memory(
+            "VRAM to reserve for other apps", a.reserve_vram_mib
+        )
+        a.reserve_ram_mib = ask_memory(
+            "System RAM to reserve for other apps", a.reserve_ram_mib
         )
         print(KV_GUIDANCE)
         print("Native context: 262144 tokens for tuning and inference.")
@@ -419,7 +433,7 @@ def main(argv=None):
             + "\n  ".join(fit["blocking_reasons"])
         )
         print(
-            "Choose a smaller compatible model, close other apps, reduce reservation, or add RAM/disk as indicated."
+            "Resolve the listed engine, hardware or model compatibility issue."
         )
         return 2
     if fit.get("resource_reasons"):

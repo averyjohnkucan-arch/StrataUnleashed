@@ -129,11 +129,6 @@ class Tuner:
             raise ValueError("Self-tuning currently supports one NVIDIA GPU at a time")
         from tools.gguf_reader import GGUFFile
 
-        from unleashed import check_ram_headroom
-
-        if not cfg.get("unleashed_tuning", {}).get("allow_over_budget", False):
-            check_ram_headroom(cfg["args"], reserve_ram_mib)
-
         native = cfg["args"][cfg["args"].index("--native") + 1]
         metadata = GGUFFile(native).metadata
         trained_context = metadata.get("qwen4exp.context_length")
@@ -189,8 +184,6 @@ class Tuner:
         budget = self.total - reserve_vram_mib - self.safety_mib
         if target is not None:
             budget = min(budget, self.total * target)
-        if budget - self.background_mib < 1024:
-            raise ValueError("VRAM reservation leaves less than 1 GiB for the engine")
         self.target = budget / self.total
         atomic(
             out / "memory-budget.json",

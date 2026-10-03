@@ -28,7 +28,7 @@ This is the **Qwen3.8-Flash-Next family**. Other architectures such as 27B and 2
 
 ## What “fits” means
 
-The picker checks available RAM, free disk, GPU/VRAM, context, reserved VRAM and engine/build tools. The estimates leave some room. Over-budget rows are struck through in supporting terminals but remain selectable. Missing engine/build requirements still need resolving. The table always uses FP16/Q8 KV at 262,144 context; actual runs use the capacity default or `--kv`. See [per-model CPU/GPU/engram accounting](MEMORY.md).
+The picker checks available RAM, free disk, GPU/VRAM, context, reserved VRAM and engine/build tools. The estimates leave some room. Models are never rejected or struck through based on RAM/VRAM estimates. Missing engine/build requirements still need resolving. The table always uses FP16/Q8 KV at 262,144 context; actual runs use the capacity default or `--kv`. See [per-model CPU/GPU/engram accounting](MEMORY.md).
 
 PLE lookup-table files are mapped from disk rather than permanently resident in RAM. The type and speed of the drive holding them can matter during inference. NVMe is preferred; a slower or unidentified drive receives a warning.
 

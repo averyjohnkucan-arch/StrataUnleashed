@@ -198,33 +198,6 @@ def signature(cfg):
     )
 
 
-def check_ram_headroom(args, reserve_mib):
-    """Recheck current RAM before preparation or reuse of a cached profile."""
-    if not reserve_mib:
-        return
-    import psutil
-    from tools.gguf_reader import GGUFFile
-    from tools.unleashed_catalog import inspect_headers
-    from tools.unleashed_policy import ram_estimate
-
-    if "--native" not in args:
-        raise ValueError(
-            "A --native model path is required to check the system RAM reservation"
-        )
-    paths = split_paths(args[args.index("--native") + 1])
-    inspection = inspect_headers(
-        [GGUFFile(p) for p in paths], [p.stat().st_size for p in paths]
-    )
-    need = ram_estimate(inspection)
-    available = psutil.virtual_memory().available
-    if need + reserve_mib * 1024**2 > available:
-        raise RuntimeError(
-            f"Model needs an estimated {need / 1024**3:.1f} GiB system RAM; "
-            f"{available / 1024**3:.1f} GiB is available, with {reserve_mib / 1024:.1f} GiB reserved. "
-            "Choose a smaller model, close other apps, or explicitly reduce --reserve-ram-mib."
-        )
-
-
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument(
@@ -275,7 +248,7 @@ def main():
     ap.add_argument(
         "--allow-over-budget",
         action="store_true",
-        help="Skip RAM estimate admission; measured reservation limits still apply",
+        help="Compatibility option; memory estimates no longer block launch",
     )
     ap.add_argument(
         "--chat",
@@ -294,10 +267,6 @@ def main():
         ap.error("--reserve-ram-mib must not be negative")
     if a.gpu is not None and a.gpu < 0:
         ap.error("--gpu must not be negative")
-    if a.model and not a.allow_over_budget:
-        check_ram_headroom(
-            ["--native", str(a.model.expanduser().resolve())], a.reserve_ram_mib
-        )
     if a.build:
         build()
     if not a.model and not a.config:
@@ -408,11 +377,9 @@ def main():
         "reserve_ram_mib": a.reserve_ram_mib,
         "kv": a.kv,
         "context": NATIVE_CONTEXT,
-        "policy_version": 5,
+        "policy_version": 6,
         "allow_over_budget": a.allow_over_budget,
     }
-    if not a.allow_over_budget:
-        check_ram_headroom(cfg["args"], a.reserve_ram_mib)
     key, evidence = signature(cfg)
     out = ROOT / "work/autotune" / key
     out.mkdir(parents=True, exist_ok=True)
@@ -443,8 +410,6 @@ def main():
     if a.tune_only:
         print(f"Validated configuration: {best}")
         return 0
-    if not a.allow_over_budget:
-        check_ram_headroom(cfg["args"], a.reserve_ram_mib)
     port = a.port if a.port is not None else cfg.get("port", 8100)
     if a.chat:
         from tools.unleashed_chat import session

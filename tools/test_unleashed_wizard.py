@@ -78,23 +78,23 @@ class WizardTests(unittest.TestCase):
     def fit(self, e=None, s=None, **kw):
         return W.assess(e or self.model(), s or hardware(), download_bytes=0, **kw)
 
-    def test_system_ram_reservation_changes_model_fit(self):
+    def test_system_ram_reservation_is_informational(self):
         system = hardware()
         needed = self.fit()["ram_estimate_bytes"]
         system["ram_available"] = needed + 4 * GIB
         self.assertEqual(self.fit(s=system)["status"], "candidate")
         reserved = self.fit(s=system, reserve_ram_mib=8192)
-        self.assertEqual(reserved["status"], "cannot-run-now")
+        self.assertEqual(reserved["status"], "candidate")
         self.assertEqual(
             reserved["ram_budget_bytes"], system["ram_available"] - 8 * GIB
         )
-        self.assertTrue(any("reserving 8.0 GiB" in r for r in reserved["reasons"]))
+        self.assertEqual(reserved["reasons"], [])
 
     def test_interactive_reservations_and_kv_guidance(self):
         output = io.StringIO()
         with patch.object(W, "scan_system", return_value=hardware()), patch.object(
-            W, "ask_int", side_effect=[1, 2048, 8192, 0]
-        ) as ask, patch.object(
+            W, "ask_int", side_effect=[1, 0]
+        ), patch.object(W, "ask_memory", side_effect=[2048, 8192]) as ask, patch.object(
             W, "rows_for", wraps=W.rows_for
         ) as rows, redirect_stdout(
             output
@@ -102,13 +102,33 @@ class WizardTests(unittest.TestCase):
             self.assertEqual(W.main(["--offline"]), 0)
         args = rows.call_args.args[2]
         self.assertEqual((args.reserve_vram_mib, args.reserve_ram_mib), (2048, 8192))
-        self.assertIn("system RAM", ask.call_args_list[2].args[0])
+        self.assertIn("System RAM", ask.call_args_list[1].args[0])
         for guidance in (
             "FP16/FP16 is ideal",
             "FP16/Q8 is recommended",
             "Q8/Q5 is a last resort",
         ):
             self.assertIn(guidance, output.getvalue())
+
+    def test_unit_inputs_and_low_memory_do_not_block_model_choice(self):
+        for vram, ram, expected in [
+            ("4096", "8192", (4096, 8192)),
+            ("8192mb", "4096mb", (7813, 3907)),
+        ]:
+            system = hardware()
+            system.update(ram_total=64 * GIB, ram_available=GIB)
+            system["gpus"][0].update(total_mib=16384, free_mib=1024)
+            with patch.object(W, "scan_system", return_value=system), patch(
+                "builtins.input", side_effect=["1", vram, ram, "0"]
+            ), patch.object(W, "rows_for", wraps=W.rows_for) as rows, redirect_stdout(
+                io.StringIO()
+            ) as out:
+                self.assertEqual(W.main(["--offline"]), 0)
+            args = rows.call_args.args[2]
+            self.assertEqual((args.reserve_vram_mib, args.reserve_ram_mib), expected)
+            self.assertIn(f"{expected[0]} MiB", out.getvalue())
+            self.assertNotIn("exceeds installed", out.getvalue())
+            self.assertNotIn("Estimated startup VRAM", out.getvalue())
 
     def test_published_catalog_complete_and_pinned(self):
         self.assertEqual(len(self.entries), 22)
@@ -150,21 +170,19 @@ class WizardTests(unittest.TestCase):
         s = hardware()
         s.update(ram_total=16 * GIB, ram_available=8 * GIB, disk_free=1)
         reasons = self.fit(s=s)["reasons"]
-        self.assertTrue(any("RAM" in r for r in reasons))
+        self.assertFalse(any("RAM" in r for r in reasons))
         self.assertTrue(any("disk" in r for r in reasons))
 
     def test_available_ram_not_just_installed(self):
         s = hardware()
         s["ram_available"] = 12 * GIB
-        self.assertTrue(
-            any("currently available" in r for r in self.fit(s=s)["reasons"])
-        )
+        self.assertEqual(self.fit(s=s)["reasons"], [])
 
     def test_reservation_and_context_reduce_fit(self):
         base = self.fit()
         large = self.fit(reserve_mib=20000, context=262144)
         self.assertEqual(base["status"], "candidate")
-        self.assertEqual(large["status"], "cannot-run-now")
+        self.assertEqual(large["status"], "candidate")
         self.assertLess(large["vram_budget_bytes"], base["vram_budget_bytes"])
 
     def test_no_gpu_old_gpu_and_wrong_gpu_blocked(self):
@@ -344,8 +362,8 @@ class WizardTests(unittest.TestCase):
         out = io.StringIO()
         with redirect_stdout(out), patch.object(out, "isatty", return_value=True):
             W.show_models([row], "large")
-        self.assertIn("\x1b[9m", out.getvalue())
-        for label in ("Engram table", "CPU MEM", "GPU MEM", "Over budget; selectable"):
+        self.assertNotIn("\x1b[9m", out.getvalue())
+        for label in ("Engram table", "CPU MEM", "GPU MEM", "Recommended"):
             self.assertIn(label, out.getvalue())
         with redirect_stdout(io.StringIO()) as plain:
             W.show_models([row], "large")
@@ -398,7 +416,7 @@ class WizardTests(unittest.TestCase):
             self.assertEqual(cmd[cmd.index("--reserve-vram-mib") + 1], "2048")
             self.assertEqual(cmd[cmd.index("--gpu") + 1], "0")
             self.assertEqual(cmd[cmd.index("--reserve-ram-mib") + 1], "8192")
-            self.assertIn("--allow-over-budget", cmd)
+            self.assertNotIn("--allow-over-budget", cmd)
             self.assertIn("--retune", cmd)
             self.assertIn("--tune-only", cmd)
 

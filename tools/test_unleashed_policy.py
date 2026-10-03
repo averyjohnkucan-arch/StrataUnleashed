@@ -66,30 +66,24 @@ class PolicyTests(unittest.TestCase):
         self.assertFalse(result["ram_valid"])
         self.assertEqual(result["minimum_available_ram_mib"], 7000)
 
-    def test_cached_launch_ram_check_uses_current_available_memory(self):
-        import unleashed
-        from types import SimpleNamespace
+    def test_reservation_units(self):
+        from tools.unleashed_policy import reservation_mib
 
-        with tempfile.TemporaryDirectory(dir=ROOT / "work/tmp") as td:
-            model = Path(td) / "model.gguf"
-            model.touch()
-            with patch("tools.gguf_reader.GGUFFile"), patch(
-                "tools.unleashed_catalog.inspect_headers",
-                return_value={
-                    "expert_bytes": 20 * 1024**3,
-                    "dense_bytes": 0,
-                    "memory_accounting_version": 2,
-                    "host_embedding_bytes": 0,
-                    "gpu_dense_bytes": 0,
-                    "ple_bytes": 0,
-                },
-            ), patch(
-                "psutil.virtual_memory",
-                return_value=SimpleNamespace(available=30 * 1024**3),
-            ):
-                unleashed.check_ram_headroom(["--native", str(model)], 1024)
-                with self.assertRaisesRegex(RuntimeError, "reserved"):
-                    unleashed.check_ram_headroom(["--native", str(model)], 8192)
+        for value, expected in [
+            ("4096", 4096),
+            ("8192", 8192),
+            ("4096mb", 3907),
+            ("8192mb", 7813),
+            ("4096 MiB", 4096),
+            ("8 GiB", 8192),
+            ("1.5GiB", 1536),
+            ("4 GB", 3815),
+            ("0", 0),
+        ]:
+            self.assertEqual(reservation_mib(value), expected, value)
+        for value in ("-1", "nan", "4 frogs", "inf", ""):
+            with self.assertRaises(ValueError):
+                reservation_mib(value)
 
     def test_terminal_chat_rejects_old_reduced_context_profile(self):
         from tools.unleashed_chat import session

@@ -1,3 +1,13 @@
+# Strata Unleashed 0.1.38-r6
+
+- Reservation prompts accept explicit MiB/GiB and decimal MB/GB units and echo the interpreted free-memory amount. Bare 4096/8192 remain 4/8 GiB. Inputs such as `4096mb` and `8192mb` are now accepted as decimal MB, rounded up to whole MiB.
+- Removed model-size RAM/VRAM admission checks, memory-based unavailable labels and memory-based strikethroughs. Memory columns remain informational. The engine attempts the selected supported model.
+- Removed the tuner's estimated 1 GiB startup-space rejection. Actual allocation failures and measured user-selected reservations still apply; reservations mean memory to leave free, not memory to allocate to the model.
+- 66 regression tests cover exact inputs, independent RAM/VRAM forwarding, low-memory selection, units and existing tuning reservations. Native inference code is unchanged; r5 full-context Q5 measurements still apply.
+- Linux includes the validated engine and source-build fallback. Windows is a source/build package; native Windows execution remains unvalidated.
+
+## Previous revision
+
 # Strata Unleashed 0.1.38-r5
 
 - Corrected memory accounting from each pinned model's shard headers: SSD engram table, host expert/embedding memory and GPU dense/KV memory. All picker estimates use FP16/Q8 at 262,144 context; runtime capacity defaults remain unchanged.
