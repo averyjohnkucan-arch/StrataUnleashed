@@ -1,3 +1,12 @@
+# Strata Unleashed 0.1.38-r4
+
+- Interactive setup asks separately for extra VRAM and system RAM headroom. `--reserve-ram-mib` is available in the Windows/Linux CLI and launcher.
+- System RAM reservation reduces model-fit budgets, is rechecked against current available RAM before launch, and is included in tuning-cache identity. Tuning trials below the sampled RAM reserve are rejected. This does not impose an OS memory cap during subsequent inference.
+- Setup explains that FP16/FP16 is ideal, FP16/Q8 is recommended, and Q8/Q5 is a last resort when no other viable option fits. Capacity-based defaults and native 262,144-token context remain unchanged.
+- 62 regression tests passed, including interactive prompts, argument forwarding, RAM-budget rejection and current-memory launch checks. The inference engine is unchanged from r3; its recorded native-context GPU validation still applies to that same binary. Windows remains a source/build package without native Windows execution validation.
+
+## Previous revision
+
 # Strata Unleashed 0.1.38-r3
 
 Based on upstream Strata 0.1.38. This revision adds capacity-based KV defaults and native-context tuning to the installation/chat improvements below.

@@ -23,7 +23,7 @@ from tools.unleashed_catalog import (
 from tools.gguf_reader import GGUFFile
 from tools.unleashed_storage import scan_storage
 
-from tools.unleashed_policy import NATIVE_CONTEXT, KV_FORMATS, default_kv
+from tools.unleashed_policy import NATIVE_CONTEXT, KV_FORMATS, default_kv, KV_GUIDANCE
 
 GIB = 1024**3
 
@@ -122,6 +122,7 @@ def rows_for(entries, system, a):
                 a.context,
                 download_bytes=0 if e["provider"] == "local" else None,
                 kv=getattr(a, "kv", None),
+                reserve_ram_mib=getattr(a, "reserve_ram_mib", 0),
             ),
         }
         for e in entries
@@ -175,6 +176,8 @@ def launch_command(path, a):
         str(a.gpu),
         "--reserve-vram-mib",
         str(a.reserve_vram_mib),
+        "--reserve-ram-mib",
+        str(getattr(a, "reserve_ram_mib", 0)),
     ]
     for flag, enabled in (
         ("--retune", a.retune),
@@ -229,6 +232,12 @@ def main(argv=None):
     )
     ap.add_argument("--reserve-vram-mib", type=int, default=0)
     ap.add_argument(
+        "--reserve-ram-mib",
+        type=int,
+        default=0,
+        help="Extra system RAM headroom for other apps, in MiB",
+    )
+    ap.add_argument(
         "--context",
         type=int,
         default=NATIVE_CONTEXT,
@@ -261,6 +270,7 @@ def main(argv=None):
         ap.error("--mtp must name an existing prepared runtime directory")
     if (
         a.reserve_vram_mib < 0
+        or a.reserve_ram_mib < 0
         or a.gpu < 0
         or a.context != NATIVE_CONTEXT
         or not 1 <= a.port <= 65535
@@ -317,6 +327,13 @@ def main(argv=None):
         a.reserve_vram_mib = ask_int(
             "Extra VRAM to reserve for other apps (MiB)", a.reserve_vram_mib, 0, 1048576
         )
+        a.reserve_ram_mib = ask_int(
+            "Extra system RAM to reserve for other apps (MiB; 1024 = 1 GiB)",
+            a.reserve_ram_mib,
+            0,
+            system["ram_total"] // (1024**2),
+        )
+        print(KV_GUIDANCE)
         print("Native context: 262144 tokens for tuning and inference.")
     a.intent = a.intent or "small"
     rows = rows_for(entries, system, a)
@@ -366,8 +383,10 @@ def main(argv=None):
     for warning in fit["warnings"]:
         print(warning)
     print(
-        f'\nSelected: {e["id"]}; reserve {a.reserve_vram_mib} MiB; context {a.context}; KV {fit.get("kv", a.kv or "auto")}; GPU {a.gpu}'
+        f'\nSelected: {e["id"]}; reserve VRAM {a.reserve_vram_mib} MiB / system RAM {a.reserve_ram_mib} MiB; context {a.context}; KV {fit.get("kv", a.kv or "auto")}; GPU {a.gpu}'
     )
+    if not interactive:
+        print(KV_GUIDANCE)
     if e["provider"] != "local":
         print(
             f'Model card and license: https://huggingface.co/{e["repo"]}/tree/{e["revision"]}'
@@ -420,6 +439,7 @@ def main(argv=None):
         "model": e["id"],
         "path": str(path),
         "reserve_vram_mib": a.reserve_vram_mib,
+        "reserve_ram_mib": a.reserve_ram_mib,
         "context": a.context,
         "gpu": a.gpu,
         "assessment": fit,

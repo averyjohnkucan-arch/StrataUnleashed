@@ -121,3 +121,9 @@ Build the parity tools with `BUILD-UNLEASHED.sh` or `BUILD-UNLEASHED.ps1`, then 
 On Windows use `.venv\Scripts\python.exe` in place of `.venv/bin/python`. The large sparse-file addressing test is Linux-only; ordinary PLE format/padding tests are portable. The numerical driver without `--model` runs synthetic expert/cache checks only. Logs and return codes are saved under `work/`.
 
 For direct engine use, omitting `--mtp` serves without a draft head; `--no-mtp` also clears a preceding `--mtp` argument. Missing MTP no longer prevents the server from starting. The launcher omits MTP unless an optional runtime is supplied and measured to improve performance.
+
+## System RAM headroom
+
+`--reserve-ram-mib N` reserves additional available system RAM in the model-fit estimate and tuning acceptance checks. Interactive setup asks for it alongside the existing VRAM reserve. The launcher rechecks current RAM before preparation and cached-profile reuse. Both reservations enter the cache fingerprint and selection receipt. This does not lock RAM or impose an operating-system cap during later inference.
+
+KV guidance shown in setup: **FP16/FP16 is ideal; FP16/Q8 is recommended; Q8/Q5 is a last resort only when no other viable option fits.** Card-capacity defaults remain unchanged.

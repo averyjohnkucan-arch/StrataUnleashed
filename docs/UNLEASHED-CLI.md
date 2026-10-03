@@ -1,6 +1,6 @@
 # Interactive model setup and tuner
 
-Strata Unleashed **0.1.38-r3** uses the upstream Strata 0.1.38 engine version. The CLI runs on x86-64 Windows and Linux. Its measured self-tuner currently uses **one NVIDIA CUDA GPU**; it does not promise AMD, CPU-only, or multi-GPU tuning.
+Strata Unleashed **0.1.38-r4** uses the upstream Strata 0.1.38 engine version. The CLI runs on x86-64 Windows and Linux. Its measured self-tuner currently uses **one NVIDIA CUDA GPU**; it does not promise AMD, CPU-only, or multi-GPU tuning.
 
 ## Start
 
@@ -56,7 +56,13 @@ The BF16 expert models from HuiHui and Unsloth, and Unsloth UD-IQ1_S, are shown 
 
 The uncensored recommendation never silently substitutes a different provider. If no HuiHui candidate fits, it says so. Publisher preferences are user-requested defaults, not a measured quality ranking. A larger file is not automatically smarter or faster.
 
+## RAM and VRAM reservations
+
+Interactive setup asks separately for extra VRAM and system RAM to leave available, in MiB. The equivalent flags are `--reserve-vram-mib 2048 --reserve-ram-mib 8192`. Both default to zero additional reservation. RAM estimates are compared against currently available RAM minus the requested reserve. The launcher rechecks this before preparation and cached-profile reuse; the tuner samples available system RAM and rejects trials below the reserve. Both reservations are recorded and change the tuning-cache identity. This is admission control and measured headroom, not an OS-enforced limit during subsequent API/chat sessions.
+
 ## KV defaults and native context
+
+User guidance: **FP16/FP16 is ideal; FP16/Q8 is recommended; Q8/Q5 is a last resort only when no other viable option fits.** These recommendations do not replace the capacity-based defaults below.
 
 Defaults use total card capacity, independently of model weight quantization: FP16/FP16 at 16 GiB+, FP16/Q8 at 12–16 GiB, Q8/Q8 at 8–12 GiB, and Q8/Q6 below 8 GiB. A 64 MiB tolerance accounts for driver-reported overhead. `--kv` overrides the default explicitly; tuning never changes it automatically.
 
@@ -110,6 +116,7 @@ Use the same arguments after `CLI-UNLEASHED.bat` on Windows.
 | `--model-id ID` | Exact ID from `--list` |
 | `--local-model PATH` | Existing complete shard family; any shard can identify it |
 | `--gpu N` | Physical NVIDIA GPU index, default 0; one GPU at a time |
+| `--reserve-ram-mib N` | Extra available system RAM to retain, in MiB; default 0 |
 | `--reserve-vram-mib N` | Extra VRAM for other applications, default 0 |
 | `--context N` | Native 262,144 tokens; this is the only accepted tuning capacity |
 | `--kv PAIR` | Explicit KV override; by default 16 GiB+: FP16/FP16, 12–16: FP16/Q8, 8–12: Q8/Q8, below 8: Q8/Q6 |

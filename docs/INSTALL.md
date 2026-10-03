@@ -39,7 +39,7 @@ To choose a different destination, set `STRATA_INSTALL_DIR` before running the c
 
 1. Read the hardware and drive scan. A speed result is a short sequential read sample, not a guarantee of inference performance.
 2. Choose general/compact, coding, larger, or uncensored use.
-3. Set optional VRAM reserved for other applications. Context stays at native 262,144 tokens; KV precision defaults by card capacity (see the README).
+3. Set optional VRAM and system RAM headroom for other applications, separately in MiB (1024 MiB = 1 GiB). Context stays at native 262,144 tokens; KV precision defaults by card capacity (see the README).
 4. Choose a model/quant. Setup explains unavailable choices and displays the download size.
 5. Choose **Download, set up and chat** for terminal inference testing, **open the API** for browser/API use, **set up only**, or **download only**.
 6. Wait for the download, setup and tuning. Large models take a while to load.

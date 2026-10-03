@@ -2,7 +2,7 @@
 
 ## Model selection, verified downloads and per-machine inference tuning
 
-**Engineering note · release 0.1.38-r3 · 3 October 2026**
+**Engineering note · release 0.1.38-r4 · 3 October 2026**
 
 This note describes the Unleashed fork's installation and tuning workflow. It is not a peer-reviewed paper or a replacement for the original Strata paper. Engine architecture and upstream contributions remain attributed to Strata and its dependencies.
 
@@ -43,6 +43,8 @@ A bounded sequential sample reads up to 32 MiB from an existing file using Linux
 The measured memory limit is total device memory minus the user's additional reserve and automatic safety headroom. Safety headroom is the greater of 512 MiB or 2 percent of total VRAM. Sampling includes memory already used by the desktop and other processes. Fit trials adjust the engine's internal allocation allowance, and an out-of-memory failure raises the retained backoff floor.
 
 The KV default is FP16/FP16 for nominal 16 GiB or larger cards, FP16/Q8 for 12–16 GiB, Q8/Q8 for 8–12 GiB, and Q8/Q6 below 8 GiB. Driver-reported capacity may be up to 64 MiB below a nominal tier. Users may explicitly override this with --kv; the tuner does not change cache precision automatically.
+
+System RAM headroom is selected separately in the interactive setup or through --reserve-ram-mib. It reduces the model-fit budget, is rechecked against current available RAM before launch, and enters the tuning fingerprint. Trials whose sampled available RAM falls below the reserve are rejected. This is admission control and measured headroom, not an OS memory lock or a hard cap on later inference.
 
 The first objective is generation throughput on two 512-input/512-output workloads. The search fixes K/V precision to the GPU-capacity default (or an explicit override), and considers optional MTP settings, CPU workers, uncached-expert PCIe share and other existing runtime controls. Fresh incumbent controls and repeated comparisons reduce the risk that temperature, clocks or link-state changes make an old measurement dominate subsequent choices.
 

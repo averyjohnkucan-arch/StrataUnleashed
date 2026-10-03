@@ -5,6 +5,7 @@ All trial configurations, outputs, timings and telemetry are retained under --ou
 from __future__ import annotations
 import argparse, copy, json, math, os, statistics, subprocess, sys, threading, time
 from pathlib import Path
+import psutil
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT), str(ROOT / "tools")]
@@ -119,12 +120,18 @@ def prompt(tok, n, variant=0):
 
 
 class Tuner:
-    def __init__(self, cfg, out, repeats=2, target=None, reserve_vram_mib=0):
+    def __init__(
+        self, cfg, out, repeats=2, target=None, reserve_vram_mib=0, reserve_ram_mib=0
+    ):
         global GPU_SELECTOR
         GPU_SELECTOR = str(cfg.get("gpu", 0))
         if "," in GPU_SELECTOR or isinstance(cfg.get("gpu"), list):
             raise ValueError("Self-tuning currently supports one NVIDIA GPU at a time")
         from tools.gguf_reader import GGUFFile
+
+        from unleashed import check_ram_headroom
+
+        check_ram_headroom(cfg["args"], reserve_ram_mib)
 
         native = cfg["args"][cfg["args"].index("--native") + 1]
         metadata = GGUFFile(native).metadata
@@ -172,6 +179,10 @@ class Tuner:
         memory = gpu()
         self.total = memory[0]
         self.background_mib = memory[1]
+        if reserve_ram_mib < 0:
+            raise ValueError("System RAM reservation must not be negative")
+        self.reserve_ram_mib = reserve_ram_mib
+        self.min_available_ram_mib = psutil.virtual_memory().available / 1024**2
         self.reserve_vram_mib = reserve_vram_mib
         self.safety_mib = max(512, math.ceil(self.total * 0.02))
         budget = self.total - reserve_vram_mib - self.safety_mib
@@ -184,6 +195,8 @@ class Tuner:
             out / "memory-budget.json",
             {
                 "total_mib": self.total,
+                "reserved_system_ram_mib": self.reserve_ram_mib,
+                "initial_available_system_ram_mib": self.min_available_ram_mib,
                 "background_mib": self.background_mib,
                 "reserved_for_other_apps_mib": reserve_vram_mib,
                 "safety_mib": self.safety_mib,
@@ -206,6 +219,9 @@ class Tuner:
 
     def monitor(self):
         while not self.stopping.wait(0.25):
+            self.min_available_ram_mib = min(
+                self.min_available_ram_mib, psutil.virtual_memory().available / 1024**2
+            )
             if self.eng is None:
                 continue
             try:
@@ -342,6 +358,7 @@ class Tuner:
             "label": label,
             "state": dict(state),
             "context_tokens": NATIVE_CONTEXT,
+            "minimum_available_ram_mib": self.min_available_ram_mib,
             "input_tokens": n,
             "output_tokens": len(tokens),
             "decode_tps": len(tokens) * 1000 / last["decode_ms"],
@@ -371,19 +388,33 @@ class Tuner:
         return r
 
     def evaluate(self, state, label, n=512, repeats=None):
+        self.min_available_ram_mib = psutil.virtual_memory().available / 1024**2
+        reserve_ram = getattr(self, "reserve_ram_mib", 0)
         try:
+            if self.min_available_ram_mib < reserve_ram:
+                raise RuntimeError(
+                    "Available system RAM is already below the requested reservation"
+                )
             self.load(state)
             rows = [
                 self.request(state, n, 512, label, i % 2)
                 for i in range(repeats or self.repeats)
             ]
+            self.min_available_ram_mib = min(
+                self.min_available_ram_mib, psutil.virtual_memory().available / 1024**2
+            )
+            ram_valid = self.min_available_ram_mib >= reserve_ram
             return {
+                "ram_valid": ram_valid,
+                "minimum_available_ram_mib": self.min_available_ram_mib,
+                "reserve_ram_mib": reserve_ram,
                 "state": dict(state),
                 "decode": statistics.median(r["decode_tps"] for r in rows),
                 "prefill": statistics.median(r["prefill_tps"] for r in rows),
                 "peak": max(r["peak_vram_mib"] for r in rows),
                 "valid": max(r["peak_vram_mib"] for r in rows)
-                <= self.total * self.target,
+                <= self.total * self.target
+                and ram_valid,
             }
         except Exception as e:
             self.close()
@@ -406,6 +437,8 @@ class Tuner:
         minimum = 256
         for i in range(8):
             r = self.evaluate(state, f"vram-fit-{i}", repeats=1)
+            if r.get("ram_valid") is False:
+                return r
             if "error" in r:
                 if not any(
                     w in r["error"].lower() for w in ("memory", "fit", "alloc", "vram")
@@ -442,10 +475,15 @@ class Tuner:
                 )
             else:
                 r = self.evaluate(state, f"{key}-{v}")
-            if not r["valid"] and (
-                "peak" in r
-                or any(
-                    w in r.get("error", "").lower() for w in ("memory", "alloc", "vram")
+            if (
+                not r["valid"]
+                and r.get("ram_valid", True)
+                and (
+                    "peak" in r
+                    or any(
+                        w in r.get("error", "").lower()
+                        for w in ("memory", "alloc", "vram")
+                    )
                 )
             ):
                 fitted = self.fit(state)
@@ -494,7 +532,7 @@ class Tuner:
             best = self.evaluate(best["state"], "baseline")
         if not best["valid"]:
             raise RuntimeError(
-                "Could not fit the selected KV format at native 262144-token context within the VRAM budget; choose a smaller model, explicitly override --kv, or reduce the extra reservation"
+                "Could not fit the selected KV format at native 262144-token context within the VRAM/system RAM budget; choose a smaller model, explicitly override --kv, or reduce the extra reservation"
             )
         coordinates = [
             (
@@ -594,6 +632,7 @@ class Tuner:
             "prefill_input_tokens": PREFILL_TOKENS,
             "kv_policy": "explicit override or capacity default; fixed throughout tuning",
             "reserve_vram_mib": self.reserve_vram_mib,
+            "reserve_ram_mib": getattr(self, "reserve_ram_mib", 0),
             "safety_mib": self.safety_mib,
             "background_mib": self.background_mib,
             "target_vram_fraction": self.target,
@@ -636,6 +675,12 @@ def main():
     ap.add_argument("config", type=Path)
     ap.add_argument("--out", type=Path, default=ROOT / "work/tuning")
     ap.add_argument("--smoke", action="store_true")
+    ap.add_argument(
+        "--reserve-ram-mib",
+        type=int,
+        default=0,
+        help="Minimum available system RAM to retain during tuning, in MiB",
+    )
     ap.add_argument("--repeats", type=int, default=2)
     ap.add_argument(
         "--target-vram",
@@ -655,6 +700,8 @@ def main():
         ap.error("target VRAM must be between .1 and 1")
     if a.reserve_vram_mib < 0:
         ap.error("reserved VRAM must not be negative")
+    if a.reserve_ram_mib < 0:
+        ap.error("reserved system RAM must not be negative")
     if a.repeats < 1:
         ap.error("repeats must be positive")
     for d in ("tmp", "cache"):
@@ -675,7 +722,7 @@ def main():
         os.sched_setaffinity(0, cpu_capacity())
     cfg = json.loads(a.config.read_text())
     cfg["args"] = native_args(cfg["args"])
-    t = Tuner(cfg, out, a.repeats, a.target_vram, a.reserve_vram_mib)
+    t = Tuner(cfg, out, a.repeats, a.target_vram, a.reserve_vram_mib, a.reserve_ram_mib)
     try:
         if a.smoke:
             state = {

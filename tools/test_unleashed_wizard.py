@@ -78,6 +78,38 @@ class WizardTests(unittest.TestCase):
     def fit(self, e=None, s=None, **kw):
         return W.assess(e or self.model(), s or hardware(), download_bytes=0, **kw)
 
+    def test_system_ram_reservation_changes_model_fit(self):
+        system = hardware()
+        needed = self.fit()["ram_estimate_bytes"]
+        system["ram_available"] = needed + 4 * GIB
+        self.assertEqual(self.fit(s=system)["status"], "candidate")
+        reserved = self.fit(s=system, reserve_ram_mib=8192)
+        self.assertEqual(reserved["status"], "cannot-run-now")
+        self.assertEqual(
+            reserved["ram_budget_bytes"], system["ram_available"] - 8 * GIB
+        )
+        self.assertTrue(any("reserving 8.0 GiB" in r for r in reserved["reasons"]))
+
+    def test_interactive_reservations_and_kv_guidance(self):
+        output = io.StringIO()
+        with patch.object(W, "scan_system", return_value=hardware()), patch.object(
+            W, "ask_int", side_effect=[1, 2048, 8192, 0]
+        ) as ask, patch.object(
+            W, "rows_for", wraps=W.rows_for
+        ) as rows, redirect_stdout(
+            output
+        ):
+            self.assertEqual(W.main(["--offline"]), 0)
+        args = rows.call_args.args[2]
+        self.assertEqual((args.reserve_vram_mib, args.reserve_ram_mib), (2048, 8192))
+        self.assertIn("system RAM", ask.call_args_list[2].args[0])
+        for guidance in (
+            "FP16/FP16 is ideal",
+            "FP16/Q8 is recommended",
+            "Q8/Q5 is a last resort",
+        ):
+            self.assertIn(guidance, output.getvalue())
+
     def test_published_catalog_complete_and_pinned(self):
         self.assertEqual(len(self.entries), 22)
         self.assertEqual({e["provider"] for e in self.entries}, set(C.SOURCES))
@@ -258,7 +290,7 @@ class WizardTests(unittest.TestCase):
     def test_cli_passes_gpu_reserve_and_tuning_controls(self):
         with patch.object(W, "scan_system", return_value=hardware()), patch.object(
             W, "download_model", return_value=Path("/readonly/model.gguf")
-        ) as download, patch.object(
+        ), patch.object(
             W.subprocess, "run", return_value=subprocess.CompletedProcess([], 0)
         ) as run, redirect_stdout(
             io.StringIO()
@@ -281,6 +313,8 @@ class WizardTests(unittest.TestCase):
                         "--retune",
                         "--reserve-vram-mib",
                         "2048",
+                        "--reserve-ram-mib",
+                        "8192",
                         "--port",
                         "8101",
                     ]
@@ -290,6 +324,7 @@ class WizardTests(unittest.TestCase):
             cmd = run.call_args.args[0]
             self.assertEqual(cmd[cmd.index("--reserve-vram-mib") + 1], "2048")
             self.assertEqual(cmd[cmd.index("--gpu") + 1], "0")
+            self.assertEqual(cmd[cmd.index("--reserve-ram-mib") + 1], "8192")
             self.assertIn("--retune", cmd)
             self.assertIn("--tune-only", cmd)
 

@@ -32,3 +32,20 @@ def native_args(args):
 
     args = with_arg(list(args), "--max-context", str(NATIVE_CONTEXT))
     return with_arg(args, "--rope-scaling", "none")
+
+
+KV_GUIDANCE = (
+    "KV cache guidance: FP16/FP16 is ideal; FP16/Q8 is recommended. "
+    "Q8/Q5 is a last resort, only when no other viable option fits. "
+    "Card-capacity defaults still apply; model weight quantization is separate."
+)
+
+
+def ram_estimate(inspection, context=NATIVE_CONTEXT):
+    """Conservative resident-model estimate shared by setup and launch checks."""
+    return (
+        inspection["expert_bytes"]
+        + 2 * inspection["dense_bytes"]
+        + 6 * 1024**3
+        + max(0, context - 16384) * 65536
+    )

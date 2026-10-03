@@ -2,7 +2,7 @@
 """Strata Unleashed: prepare a GGUF model, self-tune once per machine/model, serve locally."""
 
 from __future__ import annotations
-import argparse, hashlib, json, os, platform, shutil, subprocess, sys, time
+import argparse, hashlib, json, os, platform, shutil, subprocess, sys
 from pathlib import Path
 
 from tools.unleashed_policy import NATIVE_CONTEXT, KV_FORMATS, native_args
@@ -145,8 +145,6 @@ def cpu_identity():
 
 
 def signature(cfg):
-    from tools.gguf_reader import GGUFFile
-
     model = Path(cfg["args"][cfg["args"].index("--native") + 1])
     shards = split_paths(model)
     evidence = {
@@ -200,6 +198,33 @@ def signature(cfg):
     )
 
 
+def check_ram_headroom(args, reserve_mib):
+    """Recheck current RAM before preparation or reuse of a cached profile."""
+    if not reserve_mib:
+        return
+    import psutil
+    from tools.gguf_reader import GGUFFile
+    from tools.unleashed_catalog import inspect_headers
+    from tools.unleashed_policy import ram_estimate
+
+    if "--native" not in args:
+        raise ValueError(
+            "A --native model path is required to check the system RAM reservation"
+        )
+    paths = split_paths(args[args.index("--native") + 1])
+    inspection = inspect_headers(
+        [GGUFFile(p) for p in paths], [p.stat().st_size for p in paths]
+    )
+    need = ram_estimate(inspection)
+    available = psutil.virtual_memory().available
+    if need + reserve_mib * 1024**2 > available:
+        raise RuntimeError(
+            f"Model needs an estimated {need / 1024**3:.1f} GiB system RAM; "
+            f"{available / 1024**3:.1f} GiB is available, with {reserve_mib / 1024:.1f} GiB reserved. "
+            "Choose a smaller model, close other apps, or explicitly reduce --reserve-ram-mib."
+        )
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument(
@@ -236,6 +261,12 @@ def main():
         help="Extra VRAM kept free for other apps, in MiB; automatic safety margin is separate",
     )
     ap.add_argument(
+        "--reserve-ram-mib",
+        type=int,
+        default=0,
+        help="Extra available system RAM to keep for other apps, in MiB",
+    )
+    ap.add_argument(
         "--retune",
         action="store_true",
         help="Discard the saved tuning decision and measure again",
@@ -254,8 +285,14 @@ def main():
     configure_environment()
     if a.reserve_vram_mib < 0:
         ap.error("--reserve-vram-mib must not be negative")
+    if a.reserve_ram_mib < 0:
+        ap.error("--reserve-ram-mib must not be negative")
     if a.gpu is not None and a.gpu < 0:
         ap.error("--gpu must not be negative")
+    if a.model:
+        check_ram_headroom(
+            ["--native", str(a.model.expanduser().resolve())], a.reserve_ram_mib
+        )
     if a.build:
         build()
     if not a.model and not a.config:
@@ -363,10 +400,12 @@ def main():
     cfg["args"] = native_args(cfg.get("args", []))
     cfg["unleashed_tuning"] = {
         "reserve_vram_mib": a.reserve_vram_mib,
+        "reserve_ram_mib": a.reserve_ram_mib,
         "kv": a.kv,
         "context": NATIVE_CONTEXT,
         "policy_version": 3,
     }
+    check_ram_headroom(cfg["args"], a.reserve_ram_mib)
     key, evidence = signature(cfg)
     out = ROOT / "work/autotune" / key
     out.mkdir(parents=True, exist_ok=True)
@@ -377,7 +416,7 @@ def main():
     report = out / "RESULTS.json"
     if a.retune or not (best.exists() and report.exists()):
         print(
-            f"Self-tuning for maximum practical GPU residency, reserving {a.reserve_vram_mib} MiB for other apps plus automatic safety headroom; 262144-token context throughout; 512/512 decode, then 261624/512 full-context validation within 10% short-decode loss.",
+            f"Self-tuning for maximum practical GPU residency, reserving {a.reserve_vram_mib} MiB VRAM and {a.reserve_ram_mib} MiB system RAM for other apps plus automatic safety headroom; 262144-token context throughout; 512/512 decode, then 261624/512 full-context validation within 10% short-decode loss.",
             flush=True,
         )
         run(
@@ -390,11 +429,14 @@ def main():
                 out,
                 "--reserve-vram-mib",
                 a.reserve_vram_mib,
+                "--reserve-ram-mib",
+                a.reserve_ram_mib,
             ]
         )
     if a.tune_only:
         print(f"Validated configuration: {best}")
         return 0
+    check_ram_headroom(cfg["args"], a.reserve_ram_mib)
     port = a.port if a.port is not None else cfg.get("port", 8100)
     if a.chat:
         from tools.unleashed_chat import session

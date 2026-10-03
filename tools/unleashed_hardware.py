@@ -14,7 +14,7 @@ from tools.unleashed_catalog import ROOT
 from tools.unleashed_download import remaining_download
 from tools.unleashed_storage import scan_storage
 
-from tools.unleashed_policy import NATIVE_CONTEXT, default_kv
+from tools.unleashed_policy import NATIVE_CONTEXT, default_kv, ram_estimate
 
 GIB = 1024**3
 MIB = 1024**2
@@ -130,8 +130,11 @@ def assess(
     context=NATIVE_CONTEXT,
     download_bytes=None,
     kv=None,
+    reserve_ram_mib=0,
 ):
     """Conservative estimates for this tuner's resident-expert mode; never promise a fit."""
+    if reserve_ram_mib < 0:
+        raise ValueError("System RAM reservation must not be negative")
     ins = entry["inspection"]
     blocked = list(ins["reasons"])
     warnings = []
@@ -153,12 +156,7 @@ def assess(
         )
     # The PLE table is mapped from disk, not counted as a permanently resident RAM allocation.
     # Include expert arena, two dense copies, OS/loader overhead, and modest context growth.
-    ram_need = (
-        ins["expert_bytes"]
-        + 2 * ins["dense_bytes"]
-        + 6 * GIB
-        + max(0, context - 16384) * 65536
-    )
+    ram_need = ram_estimate(ins, context)
     disk_need = (
         (remaining_download(entry) if download_bytes is None else download_bytes)
         + ins["pack_bytes"]
@@ -170,13 +168,14 @@ def assess(
     bits = [16 if part == "FP16" else int(part[1:]) for part in pair.split("/")]
     row_bytes = sum(512 if b == 16 else 8 * (2 + 4 * b) for b in bits)
     vram_need = ins["dense_bytes"] + context * 12 * 2 * row_bytes + 2 * GIB
+    ram_budget = max(0, system["ram_available"] - reserve_ram_mib * MIB)
     if ram_need > system["ram_total"]:
         blocked.append(
             f'Estimated resident RAM need {ram_need / GIB:.1f} GiB exceeds installed {system["ram_total"] / GIB:.1f} GiB'
         )
-    elif ram_need > system["ram_available"]:
+    elif ram_need > ram_budget:
         blocked.append(
-            f'Estimated RAM need {ram_need / GIB:.1f} GiB exceeds currently available {system["ram_available"] / GIB:.1f} GiB; close other apps'
+            f"Estimated RAM need {ram_need / GIB:.1f} GiB exceeds {ram_budget / GIB:.1f} GiB currently available after reserving {reserve_ram_mib / 1024:.1f} GiB for other apps; close other apps or choose a smaller model"
         )
     if disk_need > system["disk_free"]:
         blocked.append(
@@ -221,6 +220,8 @@ def assess(
         "reasons": blocked,
         "warnings": warnings,
         "ram_estimate_bytes": ram_need,
+        "ram_budget_bytes": ram_budget,
+        "reserve_ram_mib": reserve_ram_mib,
         "additional_disk_bytes": disk_need,
         "kv": pair,
         "context_tokens": context,

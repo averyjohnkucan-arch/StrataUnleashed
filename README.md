@@ -70,17 +70,19 @@ Every tuning trial and inference session uses **262,144 tokens (256 Ki tokens)**
 | 8–12 GiB | Q8 / Q8 |
 | Below 8 GiB | Q8 / Q6 |
 
+**KV guidance:** FP16/FP16 is ideal; FP16/Q8 is recommended. Q8/Q5 is a last resort, only when no other viable option fits. These are setup recommendations, not a claim of measured quality for every model.
+
 These are **KV cache** settings, separate from model weight quantization. The tuner keeps the selected precision fixed; `--kv Q8/Q8`, for example, explicitly overrides it. Capacity tiers allow 64 MiB for driver-reported overhead. A default does not guarantee that a model fits: setup reports insufficient resources and never silently reduces context or precision.
 
 ## Leave room for other apps
 
-Setup asks how much extra graphics memory to leave free. For example:
+Setup asks how much extra **VRAM and system RAM** to leave available for other applications. Enter each amount in MiB (1024 MiB = 1 GiB). For example:
 
 ```bash
-./cli-unleashed.sh --reserve-vram-mib 2048
+./cli-unleashed.sh --reserve-vram-mib 2048 --reserve-ram-mib 8192
 ```
 
-This leaves an additional 2 GiB, on top of automatic safety headroom. Tuning first optimizes short-prompt generation, then prompt processing while keeping at least 90% of the measured generation speed. Later starts reuse a matching tuning result.
+This requests 2 GiB of extra VRAM headroom and 8 GiB of available system RAM. RAM reservation reduces the model-selection budget, is rechecked before launch, and rejects tuning trials that dip below it. It is a headroom target, not an operating-system memory lock; other applications can still consume memory. VRAM safety headroom remains separate. Tuning first optimizes short-prompt generation, then prompt processing while keeping at least 90% of the measured generation speed. Later starts reuse a matching tuning result.
 
 ## Testing
 
