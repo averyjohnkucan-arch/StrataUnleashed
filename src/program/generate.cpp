@@ -450,7 +450,7 @@ void usage() {
                  "  --ple-inflight N     outstanding SSD reads (default 256)\n"
                  "  --ple-delay-us U     fault injection: each row read completes no earlier than U us\n"
                  "  --ple-sync-submit    A/B arm: submit table reads on the token thread (default: an I/O thread)\n"
-                 "  --kv FP16/FP16|FP16/Q8|Q8/Q8|Q8/Q5|Q5/Q5|Q5/Q4|Q4/Q4\n"
+                 "  --kv FP16/FP16|FP16/Q8|Q8/Q8|Q8/Q6|Q8/Q5|Q5/Q5|Q5/Q4|Q4/Q4\n"
                  "                       independent main-model K/V precision; mixed modes require resident KV\n"
                  "  --kv fp16|int8       KV storage (plan v0.3 P7): int8 codes + fp16 scale per 64 values, half the\n"
                  "                       VRAM; default fp16 until gate G-C accepts int8\n"
@@ -1567,6 +1567,7 @@ int main(int argc, char** argv) {
     else if (o.kv == "Q8/Q8" || o.kv == "q8/q8") o.kv="int8";
     else if (o.kv == "Q4/Q4" || o.kv == "q4/q4") o.kv="q4_0";
     else if (o.kv == "FP16/Q8" || o.kv == "fp16/q8") { mixed_k=16; mixed_v=8; }
+    else if (o.kv == "Q8/Q6" || o.kv == "q8/q6") { mixed_k=8; mixed_v=6; }
     else if (o.kv == "Q8/Q5" || o.kv == "q8/q5") { mixed_k=8; mixed_v=5; }
     else if (o.kv == "Q5/Q5" || o.kv == "q5/q5") { mixed_k=5; mixed_v=5; }
     else if (o.kv == "Q5/Q4" || o.kv == "q5/q4") { mixed_k=5; mixed_v=4; }
@@ -1577,7 +1578,7 @@ int main(int argc, char** argv) {
     }
     if (o.kv == "q4") o.kv = "q4_0";
     if (!mixed_k && o.kv != "fp16" && o.kv != "int8" && o.kv != "q4_0" && o.kv != "k8v4") {
-        std::fprintf(stderr, "strata generate: --kv must be fp16, int8, q4_0, k8v4, FP16/FP16, FP16/Q8, Q8/Q8, Q8/Q5, Q5/Q5, Q5/Q4 or Q4/Q4\n");
+        std::fprintf(stderr, "strata generate: --kv must be fp16, int8, q4_0, k8v4, FP16/FP16, FP16/Q8, Q8/Q8, Q8/Q6, Q8/Q5, Q5/Q5, Q5/Q4 or Q4/Q4\n");
         return 2;
     }
     strata::core::qsa_set_kv_int8(o.kv == "int8");

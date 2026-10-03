@@ -2,7 +2,7 @@
 
 ## Model selection, verified downloads and per-machine inference tuning
 
-**Engineering note · release 0.1.38-r2 · 3 October 2026**
+**Engineering note · release 0.1.38-r3 · 3 October 2026**
 
 This note describes the Unleashed fork's installation and tuning workflow. It is not a peer-reviewed paper or a replacement for the original Strata paper. Engine architecture and upstream contributions remain attributed to Strata and its dependencies.
 
@@ -12,7 +12,7 @@ A large mixture-of-experts model can be difficult to install even when the infer
 
 The workflow targets the Qwen3.8-Flash-Next qwen4exp family on an x86-64 CPU and one NVIDIA GPU. It checks the actual machine at setup time. Paths, GPU index, RAM, VRAM, drive type and measured settings are not copied from the development computer. Unsupported platforms receive a diagnostic rather than a claim of universal compatibility. Upstream AMD, multi-GPU and specialized low-RAM workflows are separate from this guided tuner.
 
-The app is distributed as verified release archives. Linux includes a previously validated Ada engine; Windows supplies source and build scripts. Python packages are installed locally. Drivers and compiler/CUDA prerequisites remain explicit requirements, and a source build is requested when the recorded binary architecture does not match the machine.
+The app is distributed as verified release archives. Linux includes an Ada engine; Windows supplies source and build scripts. Python packages are installed locally. Drivers and compiler/CUDA prerequisites remain explicit requirements, and a source build is requested when the recorded binary architecture does not match the machine.
 
 ### 2. Catalog and download integrity
 
@@ -28,11 +28,11 @@ Recommendation preferences follow the requested product behavior: ISTA for compa
 
 ### 3. Machine and storage assessment
 
-The scanner reads the operating system, CPU, installed and available RAM, free disk, NVIDIA device/driver information, current free VRAM, build tools and engine compatibility. A model that exceeds an estimate receives a specific reason, such as insufficient currently available RAM or a missing compiler. Users can change context or reserved VRAM and compare the results.
+The scanner reads the operating system, CPU, installed and available RAM, free disk, NVIDIA device/driver information, current free VRAM, build tools and engine compatibility. A model that exceeds an estimate receives a specific reason, such as insufficient currently available RAM or a missing compiler. Users can change KV precision or reserved VRAM and compare the results.
 
 The current resident-expert RAM estimate is expert bytes plus twice dense-weight bytes plus 6 GiB overhead. Context beyond 16,384 tokens adds 64 KiB per extra token. Disk estimates include remaining downloads, converted pack bytes and 2 GiB working headroom. The PLE table is mapped from disk rather than treated as a permanently resident RAM allocation.
 
-The advisory startup VRAM estimate includes dense weights, a conservative FP16 cache allowance of context x 48 x 2 x 256 x 4 bytes, and 2 GiB workspace. These estimates can reject marginal setups that manual configuration or another engine might run. They do not prove a universal lower bound.
+The advisory startup VRAM estimate includes dense weights, a cache allowance for the selected precision across 12 full-attention layers with two KV heads and 256 values per head, and 2 GiB workspace. These estimates can reject marginal setups that manual configuration or another engine might run. They do not prove a universal lower bound.
 
 Drive identification is performed on the volume actually containing the app or selected model. Linux follows the mounted block device to its parent transport; Windows queries the partition's disk bus. NVMe is reported only when identified as such. SATA, USB, rotational and unknown storage receive an experience-may-vary notice.
 
@@ -42,9 +42,11 @@ A bounded sequential sample reads up to 32 MiB from an existing file using Linux
 
 The measured memory limit is total device memory minus the user's additional reserve and automatic safety headroom. Safety headroom is the greater of 512 MiB or 2 percent of total VRAM. Sampling includes memory already used by the desktop and other processes. Fit trials adjust the engine's internal allocation allowance, and an out-of-memory failure raises the retained backoff floor.
 
-The first objective is generation throughput on two 512-input/512-output workloads. The search considers supported K/V cache pairs, optional MTP settings, CPU workers, uncached-expert PCIe share and other existing runtime controls. Fresh incumbent controls and repeated comparisons reduce the risk that temperature, clocks or link-state changes make an old measurement dominate subsequent choices.
+The KV default is FP16/FP16 for nominal 16 GiB or larger cards, FP16/Q8 for 12–16 GiB, Q8/Q8 for 8–12 GiB, and Q8/Q6 below 8 GiB. Driver-reported capacity may be up to 64 MiB below a nominal tier. Users may explicitly override this with --kv; the tuner does not change cache precision automatically.
 
-The second objective is prompt processing, tested on a longer 8,192-input/512-output workload. A candidate must retain at least 90 percent of the measured generation baseline. Final fresh-engine checks validate the chosen settings before publishing best-config.json. If no candidate passes, the tuner does not silently label a failed run optimal.
+The first objective is generation throughput on two 512-input/512-output workloads. The search fixes K/V precision to the GPU-capacity default (or an explicit override), and considers optional MTP settings, CPU workers, uncached-expert PCIe share and other existing runtime controls. Fresh incumbent controls and repeated comparisons reduce the risk that temperature, clocks or link-state changes make an old measurement dominate subsequent choices.
+
+The second objective is prompt processing, tested on a 261,624-input/512-output workload. Every trial, including short decode tests, allocates native 262,144-token context. No context reduction or RoPE extension is used. A candidate must retain at least 90 percent of the measured generation baseline. Final fresh-engine checks validate the chosen settings before publishing best-config.json. If no candidate passes, the tuner does not silently label a failed run optimal.
 
 This procedure searches a finite set of supported controls and nearby refinements. It is not a proof of a global optimum and does not predict the same speed on another machine. The saved fingerprint includes model, engine, tuning code, hardware and relevant configuration so changed conditions can trigger a new search.
 
@@ -64,7 +66,9 @@ For 512 input and 512 output tokens, the selected configuration's median generat
 
 A separate 2,048 MiB extra-reserve check peaked at 13,794 MiB, below its 13,816 MiB limit. That was a reserve-behavior validation, not an independent complete optimization sweep for that reserve.
 
-The packaging/chat cleanup retains the engine and tuning search. Regression coverage includes fit estimates across simulated GPU/OS combinations, archive extraction, download resume and corruption handling, no-system prompt rendering, storage notices and read-only direct-I/O behavior. A real terminal request against the local Q5 model returned the requested answer. Native Windows execution is still unverified; simulated Windows tests are explicitly labeled as such.
+The 0.1.38-r3 revision adds Q8/Q6 cache parsing and fixes native-context tuning policy. The earlier throughput and chat results above used the previous engine and reduced context; they do not validate native-context throughput. Regression coverage includes fit estimates across simulated GPU/OS combinations, archive extraction, download resume and corruption handling, no-system prompt rendering, storage notices and read-only direct-I/O behavior. A real terminal request against the local Q5 model returned the requested answer. Native Windows execution is still unverified; simulated Windows tests are explicitly labeled as such.
+
+The native-context revision separately passed a Q5 FP16/FP16 run without MTP: 261,624 input tokens, 512 generated tokens and eight internal margin tokens within a 262,144-token allocation. A single sample measured approximately 451 prefill tokens/s and 25.7 decode tokens/s near the context limit, with about 95 percent total VRAM usage. This is a capacity/inference validation, not a new complete optimization sweep. See docs/UNLEASHED-NATIVE-VALIDATION.json for the engine hash and exact measurements.
 
 ### 7. Reproduction and limitations
 

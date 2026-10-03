@@ -23,7 +23,7 @@ int main(){
  auto dx=alloc<float>(x.size()),dq=alloc<float>(q.size());ck(cudaMemcpy(dx,x.data(),x.size()*4,cudaMemcpyHostToDevice));ck(cudaMemcpy(dq,q.data(),q.size()*4,cudaMemcpyHostToDevice));
  auto go=alloc<uint16_t>(x.size()),vo=alloc<uint16_t>(x.size());auto attn=alloc<float>(q.size()),scratch=alloc<float>(qsa_decode_attn_scratch_floats(N,s));
  int failures=0;
- for(auto pair:std::vector<std::pair<int,int>>{{16,8},{8,5},{5,5},{5,4}}){int kb=pair.first,vb=pair.second;
+ for(auto pair:std::vector<std::pair<int,int>>{{16,8},{8,6},{8,5},{5,5},{5,4}}){int kb=pair.first,vb=pair.second;
   auto k=alloc<uint8_t>(NP*s.page_size*H*kv_mixed_row_bytes(kb,D)),v=alloc<uint8_t>(NP*s.page_size*H*kv_mixed_row_bytes(vb,D));
   kv_mixed_append(k,v,kb,vb,pt,nullptr,0,N,dx,dx,s,nullptr);
   kv_mixed_gather(k,v,kb,vb,pt,di,ds,N,s,go,vo,nullptr);ck(cudaDeviceSynchronize());

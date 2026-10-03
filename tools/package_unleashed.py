@@ -129,7 +129,7 @@ def main():
                 else None
             ),
             "validation": (
-                "Linux Q5 and CUDA numerical checks; see RELEASE-NOTES.md"
+                "Linux Q5 native-context validation and CUDA mixed-KV parity; see docs/UNLEASHED-NATIVE-VALIDATION.json"
                 if target.startswith("linux")
                 else "Windows build/run not validated in the Linux development environment"
             ),

@@ -29,9 +29,9 @@ The guided workflow uses one NVIDIA GPU and resident experts. Upstream's other b
 
 ## How tuning chooses settings
 
-First establish a measured VRAM budget: total memory minus automatic headroom and the user's extra reserve. Test cache formats, CPU workers, uncached-expert transfer share, draft settings when an MTP head exists, and prompt chunk sizes. Compare candidates against fresh control runs so changing machine conditions do not make an old fast result the permanent winner.
+First establish a measured VRAM budget: total memory minus automatic headroom and the user's extra reserve. Choose the capacity-based KV default (or explicit override) and keep it fixed. Test CPU workers, uncached-expert transfer share, draft settings when an MTP head exists, and prompt chunk sizes. Compare candidates against fresh control runs so changing machine conditions do not make an old fast result the permanent winner.
 
-The first objective is generation speed on 512 input and 512 output tokens. The second is prompt processing on a longer input while retaining at least 90% of the generation baseline. Only a configuration that passes final checks is saved. This is a measured search over supported settings, not proof of a global optimum.
+Every trial allocates native 262,144-token context. The first objective is generation speed on 512 input and 512 output tokens. The second is prompt processing on 261,624 input tokens plus 512 output tokens while retaining at least 90% of the generation baseline. Only a configuration that passes final checks is saved. This is a measured search over supported settings, not proof of a global optimum.
 
 ## Test chat
 

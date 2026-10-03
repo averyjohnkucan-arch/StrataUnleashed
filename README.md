@@ -59,6 +59,19 @@ Test chat has **no system prompt**. Just your messages and the model's replies, 
 
 For browser chat or another app, choose **Download, set up and open the API**. Leave the terminal open while you use it.
 
+## Native context and KV defaults
+
+Every tuning trial and inference session uses **262,144 tokens (256 Ki tokens)** of context capacity. Short generation tests use 512 input and 512 output tokens; long prefill validation fills the context with 261,624 input and 512 output tokens, leaving the engine’s required eight-token safety margin.
+
+| GPU capacity | Default key / value cache |
+| --- | --- |
+| 16 GiB or more | FP16 / FP16 |
+| 12–16 GiB | FP16 / Q8 |
+| 8–12 GiB | Q8 / Q8 |
+| Below 8 GiB | Q8 / Q6 |
+
+These are **KV cache** settings, separate from model weight quantization. The tuner keeps the selected precision fixed; `--kv Q8/Q8`, for example, explicitly overrides it. Capacity tiers allow 64 MiB for driver-reported overhead. A default does not guarantee that a model fits: setup reports insufficient resources and never silently reduces context or precision.
+
 ## Leave room for other apps
 
 Setup asks how much extra graphics memory to leave free. For example:
@@ -71,7 +84,9 @@ This leaves an additional 2 GiB, on top of automatic safety headroom. Tuning fir
 
 ## Testing
 
-On the local RTX 5000 Ada 16 GB laptop GPU, the Atomic Q5 model reached **51.64 generated tokens/s** on a 512-token prompt/reply and **1,644 prompt tokens/s** on an 8,192-token prompt. Those measurements are hardware-specific. [Results and limitations](RELEASE-NOTES.md).
+The native-context revision passes 58 regression tests and CUDA mixed-cache checks, including Q8/Q6. [Native-context validation record](docs/UNLEASHED-NATIVE-VALIDATION.json).
+
+On the local RTX 5000 Ada 16 GB laptop GPU, the Atomic Q5 model reached **51.64 generated tokens/s** on a 512-token prompt/reply and **1,644 prompt tokens/s** on an 8,192-token prompt. Those are historical reduced-context measurements, not validation or speed claims for the new native-context policy. [Results and limitations](RELEASE-NOTES.md).
 
 Linux execution is tested. Windows launch/build scripts and simulated platform checks are included, but Windows execution has not been verified. The self-tuner currently supports **one NVIDIA GPU**. The bundled Linux engine targets Ada and recent Linux libraries; other machines may need a source build.
 

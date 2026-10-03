@@ -1,4 +1,17 @@
-# Strata Unleashed 0.1.38-r2
+# Strata Unleashed 0.1.38-r3
+
+Based on upstream Strata 0.1.38. This revision adds capacity-based KV defaults and native-context tuning to the installation/chat improvements below.
+
+- Default K/V cache precision: 16 GiB+ FP16/FP16; 12–16 GiB FP16/Q8; 8–12 GiB Q8/Q8; below 8 GiB Q8/Q6. Totals within 64 MiB below a tier account for driver overhead. Weight quantization is independent.
+- Added Q8/Q6 mixed KV parsing and numerical parity coverage. The tuner holds the chosen KV pair fixed; `--kv` is an explicit override.
+- Every tuning trial allocates 262,144 context tokens. Short decode remains 512/512; prefill candidates and final validation use 261,624/512. A failed full-context trial cannot produce an accepted tuning profile.
+- Imported configurations and cache fingerprints enforce the new policy. No automatic context reduction, KV precision reduction or RoPE extension occurs.
+- Fit estimates count the supported architecture's 12 full-attention layers and the selected KV precision. Small cards can still be rejected when the selected model does not fit.
+
+58 CPU regression tests and CUDA mixed-KV storage/attention parity passed, including Q8/Q6. Q8/Q6 also passed real Q5 short inference and zero-system-prompt chat with 262,144-token allocation; its near-full-context prompt was not separately tested. Q5 FP16/FP16 passed 512/512 and 261,624/512 generation at native context without MTP. These are single validation samples, not a completed tuning sweep. Native-context GPU validation is recorded in [the native-context validation record](docs/UNLEASHED-NATIVE-VALIDATION.json); earlier performance results below are historical and do not validate this policy. Windows remains a source/build release without native Windows execution testing.
+
+## Installation and chat improvements (0.1.38-r2)
+
 
 This packaging revision keeps the Strata 0.1.38 engine and adds a simpler install-to-chat experience.
 

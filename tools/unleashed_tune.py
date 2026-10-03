@@ -3,8 +3,7 @@ All trial configurations, outputs, timings and telemetry are retained under --ou
 """
 
 from __future__ import annotations
-import argparse, copy, hashlib, json, math, os, platform, statistics, subprocess, sys, threading, time
-from contextlib import contextmanager
+import argparse, copy, json, math, os, statistics, subprocess, sys, threading, time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -13,8 +12,16 @@ from serve.server import StrataEngine, child_env
 from strata_tokenizer import Tokenizer
 from calibrate import with_arg
 
+from tools.unleashed_policy import (
+    NATIVE_CONTEXT,
+    PREFILL_TOKENS,
+    KV_FORMATS,
+    default_kv,
+    native_args,
+)
+
 GPU_SELECTOR = "0"
-KV = ("FP16/FP16", "FP16/Q8", "Q8/Q8", "Q8/Q5", "Q5/Q5", "Q5/Q4", "Q4/Q4")
+KV = KV_FORMATS
 
 
 def atomic(path, obj):
@@ -98,14 +105,15 @@ def prompt(tok, n, variant=0):
         "\nUse the notes above as background. Now write the tutorial in full.<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n",
         parse_special=True,
     )
-    body = tok.encode(
-        task
-        + (
-            "Background notes: caches trade space for speed; correctness should be tested; measure before optimizing. "
-            * n
-        )
+    needed = n - len(start) - len(end)
+    if needed < 1:
+        raise ValueError("Benchmark prompt is shorter than its chat template")
+    body = tok.encode(task)
+    notes = tok.encode(
+        "Background notes: caches trade space for speed; correctness should be tested; measure before optimizing. "
     )
-    result = start + body[: n - len(start) - len(end)] + end
+    body += notes * max(0, math.ceil((needed - len(body)) / len(notes)))
+    result = start + body[:needed] + end
     assert len(result) == n
     return result
 
@@ -116,6 +124,15 @@ class Tuner:
         GPU_SELECTOR = str(cfg.get("gpu", 0))
         if "," in GPU_SELECTOR or isinstance(cfg.get("gpu"), list):
             raise ValueError("Self-tuning currently supports one NVIDIA GPU at a time")
+        from tools.gguf_reader import GGUFFile
+
+        native = cfg["args"][cfg["args"].index("--native") + 1]
+        metadata = GGUFFile(native).metadata
+        trained_context = metadata.get("qwen4exp.context_length")
+        if trained_context is None or int(trained_context) < NATIVE_CONTEXT:
+            raise ValueError(
+                "Model metadata does not support native 262144-token context; tuning will not reduce context or apply RoPE scaling"
+            )
         self.lock = (ROOT / "work/gpu.lock").open("a+b")
         if os.name == "nt":
             import msvcrt
@@ -129,6 +146,7 @@ class Tuner:
             import fcntl
 
             fcntl.flock(self.lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        cfg = dict(cfg, args=native_args(cfg["args"]))
         self.cfg = cfg
         self.out = out
         out.mkdir(parents=True, exist_ok=True)
@@ -180,6 +198,8 @@ class Tuner:
         self.peak = 0
         self.stopping = threading.Event()
         self.telemetry = []
+        self.active_trial = None
+        self.last_progress = 0.0
         self.tok = Tokenizer.from_gguf(cfg["args"][cfg["args"].index("--native") + 1])
         self.thread = threading.Thread(target=self.monitor, daemon=True)
         self.thread.start()
@@ -192,6 +212,15 @@ class Tuner:
                 g = gpu()
                 self.peak = max(self.peak, g[1])
                 self.telemetry.append([time.time(), *g])
+                trial = self.active_trial
+                now = time.monotonic()
+                if trial and now - self.last_progress >= 30:
+                    label, started = trial
+                    print(
+                        f"{label}: running for {now - started:.0f}s; GPU memory {g[1]:.0f}/{self.total:.0f} MiB",
+                        flush=True,
+                    )
+                    self.last_progress = now
             except Exception:
                 pass
 
@@ -211,9 +240,10 @@ class Tuner:
         self.lock.close()
 
     def args(self, state):
-        a = [arg for arg in self.cfg["args"] if arg != "--no-mtp"]
+        a = native_args([arg for arg in self.cfg["args"] if arg != "--no-mtp"])
         # Compare fresh prompts with adaptive cache sizing, including imported configs.
         for flag, value in (
+            ("--max-context", str(NATIVE_CONTEXT)),
             ("--expert-cache", "auto"),
             ("--prompt-cache", "0"),
             ("--suffix-draft", "0"),
@@ -276,23 +306,32 @@ class Tuner:
         before = gpu()
         self.peak = before[1]
         t = time.monotonic()
-        tokens = [
-            t
-            for t in self.eng.generate(
-                ids,
-                new,
-                {
-                    "temperature": 0,
-                    "strata_tune": {
-                        "pcie_frac": state["pcie"],
-                        "spec_min_p": state["minp"],
-                        "ignore_eos": 1,
+        print(
+            f"{label}: {n} input / {new} output tokens; context {NATIVE_CONTEXT}, KV {state['kv']}",
+            flush=True,
+        )
+        self.active_trial = (label, t)
+        self.last_progress = t
+        try:
+            tokens = [
+                t
+                for t in self.eng.generate(
+                    ids,
+                    new,
+                    {
+                        "temperature": 0,
+                        "strata_tune": {
+                            "pcie_frac": state["pcie"],
+                            "spec_min_p": state["minp"],
+                            "ignore_eos": 1,
+                        },
                     },
-                },
-                threading.Event(),
-            )
-            if t is not None
-        ]
+                    threading.Event(),
+                )
+                if t is not None
+            ]
+        finally:
+            self.active_trial = None
         last = dict(self.eng.last)
         after = gpu()
         self.peak = max(self.peak, after[1])
@@ -302,6 +341,7 @@ class Tuner:
         r = {
             "label": label,
             "state": dict(state),
+            "context_tokens": NATIVE_CONTEXT,
             "input_tokens": n,
             "output_tokens": len(tokens),
             "decode_tps": len(tokens) * 1000 / last["decode_ms"],
@@ -434,11 +474,12 @@ class Tuner:
         return best
 
     def tune(self, seed=None, coarse_workers=True):
-        # A trusted caller may continue completed KV/MTP comparisons on the same model.
+        # A trusted caller may continue completed MTP comparisons on the same model.
         # The seed is remeasured; worker and PCIe refinement and all final checks still run.
         capacity = max(1, len(cpu_capacity()) - 1)
         initial = {
-            "kv": "FP16/FP16",
+            "kv": self.cfg.get("unleashed_tuning", {}).get("kv")
+            or default_kv(self.total),
             "workers": physical_workers(),
             "prefill": 512,
             "reserve": int(self.total * (1 - self.target)) + 600,
@@ -447,14 +488,15 @@ class Tuner:
             "spec": 0,
         }
         if seed is not None:
-            initial = dict(seed)
+            initial = dict(seed, kv=initial["kv"])
         best = self.fit(initial)
         if best["valid"]:
             best = self.evaluate(best["state"], "baseline")
         if not best["valid"]:
-            raise RuntimeError("Could not establish a valid VRAM-constrained baseline")
+            raise RuntimeError(
+                "Could not fit the selected KV format at native 262144-token context within the VRAM budget; choose a smaller model, explicitly override --kv, or reduce the extra reservation"
+            )
         coordinates = [
-            ("kv", KV),
             (
                 "workers",
                 sorted(
@@ -516,7 +558,7 @@ class Tuner:
         eligible = []
         for chunk in (256, 512, 1024, 2048, 4096, 8192):
             state = dict(baseline["state"], prefill=chunk)
-            long = self.evaluate(state, f"prefill-{chunk}", n=8192)
+            long = self.evaluate(state, f"prefill-{chunk}", n=PREFILL_TOKENS)
             if not long["valid"]:
                 state["reserve"] += max(
                     512,
@@ -526,7 +568,9 @@ class Tuner:
                     )
                     + 128,
                 )
-                long = self.evaluate(state, f"prefill-{chunk}-backoff", n=8192)
+                long = self.evaluate(
+                    state, f"prefill-{chunk}-backoff", n=PREFILL_TOKENS
+                )
             short = self.evaluate(state, f"prefill-{chunk}-decode-check")
             if (
                 long["valid"]
@@ -546,6 +590,9 @@ class Tuner:
         cfg.pop("tune_mtp", None)
         atomic(self.out / "best-config.json", cfg)
         report = {
+            "context_tokens": NATIVE_CONTEXT,
+            "prefill_input_tokens": PREFILL_TOKENS,
+            "kv_policy": "explicit override or capacity default; fixed throughout tuning",
             "reserve_vram_mib": self.reserve_vram_mib,
             "safety_mib": self.safety_mib,
             "background_mib": self.background_mib,
@@ -574,7 +621,9 @@ class Tuner:
             final = self.evaluate(winner["state"], "final-512", repeats=3)
             if not final["valid"] or final["decode"] < floor:
                 continue
-            large = self.evaluate(winner["state"], "final-8192", n=8192, repeats=3)
+            large = self.evaluate(
+                winner["state"], "final-native-context", n=PREFILL_TOKENS, repeats=3
+            )
             if large["valid"]:
                 return winner, final, large, floor
         raise RuntimeError(
@@ -625,19 +674,12 @@ def main():
     if hasattr(os, "sched_setaffinity"):
         os.sched_setaffinity(0, cpu_capacity())
     cfg = json.loads(a.config.read_text())
-    args = cfg["args"]
-    context = (
-        int(args[args.index("--max-context") + 1])
-        if "--max-context" in args
-        else 262144
-    )
-    if context < 8704 and not a.smoke:
-        ap.error("self-tuning needs context >=8704 for the prefill validation workload")
+    cfg["args"] = native_args(cfg["args"])
     t = Tuner(cfg, out, a.repeats, a.target_vram, a.reserve_vram_mib)
     try:
         if a.smoke:
             state = {
-                "kv": "FP16/FP16",
+                "kv": cfg.get("unleashed_tuning", {}).get("kv") or default_kv(t.total),
                 "workers": physical_workers(),
                 "prefill": 512,
                 "reserve": int(t.total * (1 - t.target)) + 600,

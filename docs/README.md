@@ -19,3 +19,5 @@
 ## Upstream references
 
 [Strata's original paper](paper/Strata-Paper.pdf), [engine details](DETAILS.md), [AMD](AMD_HIP.md), [multi-GPU](MULTI_GPU.md), [MCP](MCP_SERVER.md) and the other specialized reference pages are retained with attribution. They describe upstream workflows and measurements; not every feature is available through Unleashed's NVIDIA single-GPU setup. Start with the pages above for this fork.
+
+Native-context policy and GPU checks: [0.1.38-r3 validation record](UNLEASHED-NATIVE-VALIDATION.json).

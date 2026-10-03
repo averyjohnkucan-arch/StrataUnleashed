@@ -1,0 +1,86 @@
+{
+  "release": "0.1.38-r3",
+  "upstream_version": "0.1.38",
+  "context_tokens": 262144,
+  "prefill_input_tokens": 261624,
+  "output_tokens": 512,
+  "engine_internal_margin_tokens": 8,
+  "regression_tests": 58,
+  "simulated_machine_profiles": 24,
+  "mixed_kv_cuda_parity": "FP16/Q8, Q8/Q6, Q8/Q5, Q5/Q5, Q5/Q4 passed; exact gathered storage and attention absolute error below 0.001",
+  "linux_engine_sha256": "c1cd774cfa177def1354140c632cc5cc1e589c116c4a7ec764a241c28e56338c",
+  "q5_native_context": "passed FP16/FP16 short and full-context generation without MTP; one validation sample per workload, not a tuning sweep",
+  "full_auto_tuning_sweep_rerun": false,
+  "windows": "PowerShell syntax and simulated platform checks passed; native build/run not validated",
+  "historical_results": "Earlier 512/512 and 8192/512 throughput belongs to the old binary/reduced context, not this native-context release",
+  "checked_utc": "2026-10-03T21:50:22.030432+00:00",
+  "q5_measurements": [
+    {
+      "label": "native-capacity-short",
+      "context_tokens": 262144,
+      "input_tokens": 512,
+      "output_tokens": 512,
+      "decode_tps": 31.56499491384359,
+      "prefill_tps": 208.94667975139026,
+      "peak_vram_mib": 15556.0,
+      "wall_s": 18.721714576000522,
+      "state": {
+        "kv": "FP16/FP16",
+        "workers": 23,
+        "prefill": 8192,
+        "reserve": 700,
+        "pcie": 0.1,
+        "minp": 0.7,
+        "spec": 0
+      }
+    },
+    {
+      "label": "native-context-full",
+      "context_tokens": 262144,
+      "input_tokens": 261624,
+      "output_tokens": 512,
+      "decode_tps": 25.72903109092097,
+      "prefill_tps": 450.7322031562263,
+      "peak_vram_mib": 15556.0,
+      "wall_s": 600.4475921260018,
+      "state": {
+        "kv": "FP16/FP16",
+        "workers": 23,
+        "prefill": 8192,
+        "reserve": 700,
+        "pcie": 0.1,
+        "minp": 0.7,
+        "spec": 0
+      }
+    }
+  ],
+  "q8_q6_native_allocation": {
+    "context_tokens": 262144,
+    "input_tokens": 512,
+    "output_tokens": 512,
+    "decode_tps": 34.773631807006346,
+    "prefill_tps": 228.93239550199365,
+    "peak_vram_mib": 15556.0,
+    "wall_s": 16.996668182000576,
+    "state": {
+      "kv": "Q8/Q6",
+      "workers": 23,
+      "prefill": 512,
+      "reserve": 700,
+      "pcie": 0.1,
+      "minp": 0.7,
+      "spec": 0
+    }
+  },
+  "zero_system_chat": {
+    "text": "4",
+    "input_tokens": 20,
+    "output_tokens": 2,
+    "elapsed_seconds": 0.5212658130003547,
+    "decode_tokens_per_second": 33.05785123966942,
+    "prompt_ms": 459.9,
+    "finish_reason": "complete",
+    "system_messages": 0
+  },
+  "q8_q6_full_context_prompt_tested": false
+}

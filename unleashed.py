@@ -5,6 +5,8 @@ from __future__ import annotations
 import argparse, hashlib, json, os, platform, shutil, subprocess, sys, time
 from pathlib import Path
 
+from tools.unleashed_policy import NATIVE_CONTEXT, KV_FORMATS, native_args
+
 ROOT = Path(__file__).resolve().parent
 sys.dont_write_bytecode = True
 sys.path[:0] = [str(ROOT), str(ROOT / "tools")]
@@ -171,6 +173,7 @@ def signature(cfg):
     for key, p in [
         ("engine", Path(cfg["exe"])),
         ("tuner", ROOT / "tools/unleashed_tune.py"),
+        ("tuning_policy", ROOT / "tools/unleashed_policy.py"),
         ("server", ROOT / "serve/server.py"),
     ]:
         evidence[key] = hashlib.sha256(p.read_bytes()).hexdigest()
@@ -208,7 +211,18 @@ def main():
     ap.add_argument(
         "--config", type=Path, help="Existing engine config instead of --model"
     )
-    ap.add_argument("--context", type=int, default=16384)
+    ap.add_argument(
+        "--context",
+        type=int,
+        default=NATIVE_CONTEXT,
+        choices=[NATIVE_CONTEXT],
+        help="Native context capacity for every tuning trial",
+    )
+    ap.add_argument(
+        "--kv",
+        choices=KV_FORMATS,
+        help="Override the GPU-capacity KV default; held fixed during tuning",
+    )
     ap.add_argument(
         "--port", type=int, help="HTTP port; overrides the config (default 8100)"
     )
@@ -254,10 +268,6 @@ def main():
     else:
         if not engine_path().is_file():
             build()
-        if a.context < 9216:
-            ap.error(
-                "--context must be at least 9216 for the 8192/512 prefill validation workload"
-            )
         model = split_paths(a.model.resolve())[0]
         ident = hashlib.sha256(str(model).encode()).hexdigest()[:16]
         pack = ROOT / "work/packs" / ident
@@ -350,7 +360,13 @@ def main():
             cfg["tune_mtp"] = str(a.mtp.resolve())
     if a.gpu is not None:
         cfg["gpu"] = a.gpu
-    cfg["unleashed_tuning"] = {"reserve_vram_mib": a.reserve_vram_mib}
+    cfg["args"] = native_args(cfg.get("args", []))
+    cfg["unleashed_tuning"] = {
+        "reserve_vram_mib": a.reserve_vram_mib,
+        "kv": a.kv,
+        "context": NATIVE_CONTEXT,
+        "policy_version": 3,
+    }
     key, evidence = signature(cfg)
     out = ROOT / "work/autotune" / key
     out.mkdir(parents=True, exist_ok=True)
@@ -361,7 +377,7 @@ def main():
     report = out / "RESULTS.json"
     if a.retune or not (best.exists() and report.exists()):
         print(
-            f"Self-tuning for maximum practical GPU residency, reserving {a.reserve_vram_mib} MiB for other apps plus automatic safety headroom; 512/512 decode, then prefill within 10% decode loss.",
+            f"Self-tuning for maximum practical GPU residency, reserving {a.reserve_vram_mib} MiB for other apps plus automatic safety headroom; 262144-token context throughout; 512/512 decode, then 261624/512 full-context validation within 10% short-decode loss.",
             flush=True,
         )
         run(

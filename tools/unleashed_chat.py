@@ -10,8 +10,9 @@ from pathlib import Path
 
 import unleashed
 from serve.frontend import ChatTemplate
-from serve.server import StrataEngine, child_env
+from serve.server import StrataEngine, child_env, CTX_SLACK
 from tools.strata_tokenizer import Tokenizer
+from tools.unleashed_policy import NATIVE_CONTEXT
 
 ROOT = Path(__file__).resolve().parents[1]
 END_TOKENS = ("<|im_end|>", "<|endoftext|>")
@@ -34,7 +35,7 @@ def reply(
 ):
     prompt = render_prompt(template, messages)
     ids = tokenizer.encode(prompt, parse_special=True)
-    if len(ids) + max_tokens > engine.max_context:
+    if len(ids) + max_tokens + CTX_SLACK > engine.max_context:
         raise ValueError(
             "The conversation is too long. Type /new or lower /tokens before trying again."
         )
@@ -82,6 +83,14 @@ def session(
         if not isinstance(config, dict)
         else config
     )
+    args = cfg.get("args", [])
+    context = (
+        int(args[args.index("--max-context") + 1]) if "--max-context" in args else 0
+    )
+    if context != NATIVE_CONTEXT:
+        raise ValueError(
+            "Test chat requires a configuration tuned at native 262144-token context; run setup again"
+        )
     folder = Path(cfg["tokenizer"])
     tokenizer = Tokenizer.from_gguf(cfg["args"][cfg["args"].index("--native") + 1])
     template_path = folder / "chat_template.jinja"

@@ -24,7 +24,7 @@ Keep upstream attribution and licenses. Do not reformat unrelated vendored code.
 After installing `requirements-unleashed.txt` in the local environment:
 
 ```bash
-python -m unittest tools.test_unleashed_experience tools.test_unleashed_wizard tools.test_unleashed
+python -m unittest tools.test_unleashed_policy tools.test_unleashed_experience tools.test_unleashed_wizard tools.test_unleashed
 ```
 
 Use the appropriate local Python on Windows. The tests cover model selection, memory estimates, download integrity, archive extraction, terminal prompt rules and storage diagnostics. Platform simulations are not a substitute for native Windows testing. Linux direct-I/O tests skip when the filesystem does not support them.
@@ -34,3 +34,5 @@ Engine changes need the relevant numerical checks and real-model validation desc
 ## Release discipline
 
 The engine version stays in CMake. `UNLEASHED_VERSION` identifies the fork's packaging revision, such as `0.1.38-r2`. Preserve old release tags. Package the exact binary whose measurements are cited, record source/binary hashes, verify extracted launchers, and label Windows source/build artifacts accurately. Never claim every catalog model was inference-tested when only its header was checked.
+
+To rebuild the fork engineering note, install ReportLab in a development environment and run `python tools/render_unleashed_paper.py`. The upstream paper is kept separate.

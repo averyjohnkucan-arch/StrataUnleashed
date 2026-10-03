@@ -23,6 +23,8 @@ from tools.unleashed_catalog import (
 from tools.gguf_reader import GGUFFile
 from tools.unleashed_storage import scan_storage
 
+from tools.unleashed_policy import NATIVE_CONTEXT, KV_FORMATS, default_kv
+
 GIB = 1024**3
 
 
@@ -93,6 +95,9 @@ def show_scan(s):
         print(
             f'GPU {g["index"]}: {g["name"]}, {g["total_mib"]/1024:.1f} GiB VRAM, {g["free_mib"]/1024:.1f} GiB free; driver {g["driver"]}'
         )
+        print(
+            f'  Default KV: {default_kv(g["total_mib"])}; native context: {NATIVE_CONTEXT} tokens'
+        )
     if s.get("storage"):
         show_storage(s["storage"])
     for err in s["errors"]:
@@ -116,6 +121,7 @@ def rows_for(entries, system, a):
                 a.reserve_vram_mib,
                 a.context,
                 download_bytes=0 if e["provider"] == "local" else None,
+                kv=getattr(a, "kv", None),
             ),
         }
         for e in entries
@@ -178,6 +184,8 @@ def launch_command(path, a):
     ):
         if enabled:
             cmd.append(flag)
+    if getattr(a, "kv", None):
+        cmd += ["--kv", a.kv]
     if a.mtp:
         cmd += ["--mtp", str(Path(a.mtp).expanduser().resolve())]
     return cmd
@@ -221,7 +229,14 @@ def main(argv=None):
     )
     ap.add_argument("--reserve-vram-mib", type=int, default=0)
     ap.add_argument(
-        "--context", type=int, default=16384, help="Context tokens, 9216..262144"
+        "--context",
+        type=int,
+        default=NATIVE_CONTEXT,
+        choices=[NATIVE_CONTEXT],
+        help="Native context: 262144 tokens",
+    )
+    ap.add_argument(
+        "--kv", choices=KV_FORMATS, help="Override the GPU-capacity KV default"
     )
     ap.add_argument("--port", type=int, default=8100)
     ap.add_argument(
@@ -247,12 +262,10 @@ def main(argv=None):
     if (
         a.reserve_vram_mib < 0
         or a.gpu < 0
-        or not 9216 <= a.context <= 262144
+        or a.context != NATIVE_CONTEXT
         or not 1 <= a.port <= 65535
     ):
-        ap.error(
-            "Require nonnegative reserve/GPU, context 9216..262144 and port 1..65535"
-        )
+        ap.error("Require nonnegative reserve/GPU, context 262144 and port 1..65535")
     if a.json and not (a.scan or a.list):
         ap.error("--json requires --scan or --list")
     if a.offline and a.refresh_catalog:
@@ -304,7 +317,7 @@ def main(argv=None):
         a.reserve_vram_mib = ask_int(
             "Extra VRAM to reserve for other apps (MiB)", a.reserve_vram_mib, 0, 1048576
         )
-        a.context = ask_int("Context tokens", a.context, 9216, 262144)
+        print("Native context: 262144 tokens for tuning and inference.")
     a.intent = a.intent or "small"
     rows = rows_for(entries, system, a)
     if a.json:
@@ -343,7 +356,7 @@ def main(argv=None):
     if fit["reasons"]:
         print("\nCannot run this selection now:\n  " + "\n  ".join(fit["reasons"]))
         print(
-            "Choose a smaller compatible model, close other apps, reduce context/reservation, or add RAM/disk as indicated."
+            "Choose a smaller compatible model, close other apps, reduce reservation, or add RAM/disk as indicated."
         )
         return 2
     a.build = a.build or fit["needs_build"]
@@ -353,7 +366,7 @@ def main(argv=None):
     for warning in fit["warnings"]:
         print(warning)
     print(
-        f'\nSelected: {e["id"]}; reserve {a.reserve_vram_mib} MiB; context {a.context}; GPU {a.gpu}'
+        f'\nSelected: {e["id"]}; reserve {a.reserve_vram_mib} MiB; context {a.context}; KV {fit.get("kv", a.kv or "auto")}; GPU {a.gpu}'
     )
     if e["provider"] != "local":
         print(

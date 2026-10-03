@@ -2,7 +2,7 @@
 
 ## No models are available
 
-Read the reason beside each choice. Check **available** RAM, not just installed RAM; close other large applications. Lower context or extra VRAM reservation if those are the constraint. A missing compiler or CUDA Toolkit is a setup issue, not a model-size issue. Unsupported expert encodings cannot be fixed by adding RAM.
+Read the reason beside each choice. Check **available** RAM, not just installed RAM; close other large applications. Reduce extra VRAM reservation or explicitly select a smaller KV format with `--kv` if those are the constraint. Tuning keeps native 262,144-token context; it never reduces it silently. A missing compiler or CUDA Toolkit is a setup issue, not a model-size issue. Unsupported expert encodings cannot be fixed by adding RAM.
 
 The guided tuner supports one NVIDIA GPU. AMD, CPU-only and multi-GPU configurations described in some upstream references are not available through this workflow.
 

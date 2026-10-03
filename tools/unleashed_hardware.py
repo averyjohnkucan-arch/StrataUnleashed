@@ -14,6 +14,8 @@ from tools.unleashed_catalog import ROOT
 from tools.unleashed_download import remaining_download
 from tools.unleashed_storage import scan_storage
 
+from tools.unleashed_policy import NATIVE_CONTEXT, default_kv
+
 GIB = 1024**3
 MIB = 1024**2
 
@@ -121,7 +123,13 @@ def scan_system():
 
 
 def assess(
-    entry, system, gpu_index=0, reserve_mib=0, context=16384, download_bytes=None
+    entry,
+    system,
+    gpu_index=0,
+    reserve_mib=0,
+    context=NATIVE_CONTEXT,
+    download_bytes=None,
+    kv=None,
 ):
     """Conservative estimates for this tuner's resident-expert mode; never promise a fit."""
     ins = entry["inspection"]
@@ -156,8 +164,12 @@ def assess(
         + ins["pack_bytes"]
         + 2 * GIB
     )
-    # Upper bound for 48 layers of FP16 K/V at 2 heads x 256 values + index/workspace allowance.
-    vram_need = ins["dense_bytes"] + context * 48 * 2 * 256 * 4 + 2 * GIB
+    # The supported architecture has 12 full-attention layers, two KV heads,
+    # and 256 values per head. Other layers use recurrent state.
+    pair = kv or default_kv(gpu["total_mib"]) if gpu else (kv or "FP16/FP16")
+    bits = [16 if part == "FP16" else int(part[1:]) for part in pair.split("/")]
+    row_bytes = sum(512 if b == 16 else 8 * (2 + 4 * b) for b in bits)
+    vram_need = ins["dense_bytes"] + context * 12 * 2 * row_bytes + 2 * GIB
     if ram_need > system["ram_total"]:
         blocked.append(
             f'Estimated resident RAM need {ram_need / GIB:.1f} GiB exceeds installed {system["ram_total"] / GIB:.1f} GiB'
@@ -210,6 +222,8 @@ def assess(
         "warnings": warnings,
         "ram_estimate_bytes": ram_need,
         "additional_disk_bytes": disk_need,
+        "kv": pair,
+        "context_tokens": context,
         "vram_estimate_bytes": vram_need,
         "vram_budget_bytes": max(0, budget),
         "needs_build": needs_build,
