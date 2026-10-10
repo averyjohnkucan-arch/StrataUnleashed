@@ -129,7 +129,7 @@ def main():
                 else None
             ),
             "validation": (
-                "Linux/CUDA Q6 extension: 38 Python tests, eight mixed-KV storage/attention pairs, 24 CLI guard checks, and four Q6 pairs with real IQ3_S inference and MTP passed. See docs/Q6-KV-VALIDATION.json and RELEASE-NOTES.md for scope and limits."
+                "Linux/CUDA mixed-KV streaming: 38 Python tests, eight mixed storage/attention pairs, 12 streaming formats, two snapshot safety suites, four streamed Q6 model modes, and a deterministic resident/streamed control passed. See docs/Q6-STREAMING-VALIDATION.json and RELEASE-NOTES.md for scope and limits."
                 if target.startswith("linux")
                 else "Windows build/run not validated in the Linux development environment"
             ),

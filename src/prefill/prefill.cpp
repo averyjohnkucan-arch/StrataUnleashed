@@ -815,7 +815,11 @@ void take_stage(Alloc& o_borrowed, const core::SessionState& ss, const strata::k
     own.owned = o_borrowed.owned;
     Alloc& o = stage_own() ? own : o_borrowed;
     const size_t rows = (size_t) q0.n_pages * s.n_head_kv * s.page_size;
-    if (q0.kv_hybrid) {   // K8V4: the three runs of kKvHybrid; pools_of() then reads as the hybrid pools (mode 3)
+    if (q0.k_bits) {
+        st.k_bits = q0.k_bits; st.v_bits = q0.v_bits;
+        st.k_mixed = o.take<uint8_t>(rows * strata::kernels::kv_mixed_row_bytes(q0.k_bits, s.head_dim), ok);
+        st.v_mixed = o.take<uint8_t>(rows * strata::kernels::kv_mixed_row_bytes(q0.v_bits, s.head_dim), ok);
+    } else if (q0.kv_hybrid) {   // K8V4: the three runs of kKvHybrid; pools_of() then reads as the hybrid pools (mode 3)
         st.k_q = o.take<int8_t>(rows * s.head_dim, ok);
         st.k_scale = o.take<uint16_t>(rows * (s.head_dim / 64), ok);
         st.v_q4 = o.take<uint8_t>(rows * strata::kernels::kv_q4_bytes_per_head((int) s.head_dim), ok);
@@ -836,6 +840,7 @@ strata::kernels::QsaAttnPools pools_of(const strata::kernels::KvHostPools& h, co
     strata::kernels::QsaAttnPools p;
     p.k_pool = h.k_pool; p.v_pool = h.v_pool; p.k_q = h.k_q; p.v_q = h.v_q; p.k_scale = h.k_scale; p.v_scale = h.v_scale;
     p.k_q4 = h.k_q4; p.v_q4 = h.v_q4;
+    p.k_mixed = h.k_mixed; p.v_mixed = h.v_mixed; p.k_bits = h.k_bits; p.v_bits = h.v_bits;
     p.page_table = table;
     return p;
 }
@@ -2614,7 +2619,7 @@ bool Prefill::run_impl(const int64_t* tokens, int64_t n, int64_t pos0, std::stri
                             strata::kernels::fwht256_inplace_cuda(m.Vc, T * 2, m.cs);
                         }
                         if (st.k_bits)
-                            strata::kernels::kv_mixed_append(st.k_mixed,st.v_mixed,st.k_bits,st.v_bits,st.page_table,nullptr,p0,T,m.Kc,m.Vc,s,m.cs);
+                            strata::kernels::kv_mixed_append(st.k_mixed,st.v_mixed,st.k_bits,st.v_bits,st.page_table,nullptr,p0,T,m.Kc,m.Vc,s,m.cs,host_w,staged ? &m.stage : nullptr);
                         else if (st.kv_q4)
                             strata::kernels::kv_append_q4(st.k_q4, st.v_q4, st.page_table, p0, T, m.Kc, m.Vc, s, m.cs,
                                                           host_w, staged ? &m.stage : nullptr);

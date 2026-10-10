@@ -324,14 +324,9 @@ bool qsa_kv_q4();
 /// Hybrid K8V4 (`--kv k8v4`): K in INT8, V in rotated Q4_0 - 816 B per cell; streams with --kv-resident too.
 void qsa_set_kv_hybrid(bool enabled);
 bool qsa_kv_hybrid();
-/// The state's KV format for the block-moving functions of kv_stream.hpp (kKvF16 / kKvInt8 / kKvQ4 / kKvHybrid).
+/// The state's KV format for the block movers, including independently packed K/V widths.
 inline int qsa_kv_format(const QsaState& st) {
-    // A hybrid K8V4 state is mode 0 only and never reaches the block movers; refuse rather than let it
-    // fall through to kKvF16 - a wrong layout silently applied is worse than a hard stop (PR review).
-    if (st.k_bits) {
-        std::fprintf(stderr, "strata: qsa_kv_format: a hybrid K8V4 state must never reach the block movers\n");
-        std::exit(1);   // the kernels' own "unsupported geometry" convention (kv_q8.cu, qsa_decode_attn.cu)
-    }
+    if (st.k_bits) return strata::kernels::kv_mixed_format(st.k_bits, st.v_bits);
     if (st.kv_hybrid) return strata::kernels::kKvHybrid;   // K8V4: its own three runs (kv_stream.cu)
     return st.kv_q4 ? strata::kernels::kKvQ4 : st.kv_int8 ? strata::kernels::kKvInt8 : strata::kernels::kKvF16;
 }

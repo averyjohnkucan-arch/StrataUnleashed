@@ -1,3 +1,13 @@
+# Strata Unleashed 0.1.41-r3
+
+Mixed KV formats now support streaming, including `Q6/Q6`, `FP16/Q6`, `Q8/Q6` and `Q6/Q8`. Use engine options `--kv Q6/Q6 --kv-resident 20480` to retain a 20,480-token device cache and load selected pages from pinned RAM. The full context and cache precision are preserved; existing defaults are unchanged.
+
+The append path mirrors identical quantized bytes into RAM, resident GPU slots, and prefill staging. Block movers use separate K/V byte sizes; decode and MTP verification resolve missing pages through the existing residency map. Streaming byte counters now reflect the actual format. Mixed-format parked conversation snapshots and elastic KV growth remain explicitly unsupported.
+
+Validation: 38 Python tests, eight mixed-KV storage/attention pairs, all 12 streaming formats, and both host-only snapshot validation/transfer suites passed. The streaming suite compares attention bit for bit over 40,000 tokens per format, forcing eviction; mixed formats also test staging DMA and captured-graph token overwrites. All four Q6 pairs passed real IQ3_S inference with MTP, 262,144-token capacity and 20,480 device-resident cells. Q6/Q6 processed a 24,576-token prompt; a separate deterministic 4,419-token control produced the same 128 output tokens with resident and streamed KV.
+
+On this single IQ3_S 24K-prompt sample, prefill was about 798 tokens/s streamed versus 906 resident; decode samples were about 50 and 47 tokens/s. Speculative replies diverged later, so these are sample timings, not an identical-token throughput comparison or general speedup claim. Windows, AMD execution and full-capacity prompt quality remain unverified. [Validation record](docs/Q6-STREAMING-VALIDATION.json).
+
 # Strata Unleashed 0.1.41-r2
 
 Adds explicit `FP16/Q6`, `Q6/Q8`, and `Q6/Q6` cache options to the engine and Unleashed launcher, alongside existing `Q8/Q6`. The engine accepts `--kv q6` as shorthand for `Q6/Q6`; the launcher uses full pair names. Card-capacity defaults are unchanged.

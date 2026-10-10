@@ -1,6 +1,7 @@
 // src/kernels/cuda/kv_stream.cu - see include/strata/kernels/kv_stream.hpp.
 #include "strata/kernels/kv_stream.hpp"
 #include "strata/kernels/kv_q4.hpp"
+#include "strata/kernels/kv_mixed.hpp"
 #include "strata/kernels/kv_q8.hpp"
 
 #include <cuda_runtime.h>
@@ -33,7 +34,13 @@ struct Runs {
 Runs runs_of(const QsaAttnPools& slots, const KvHostPools& host, int fmt, const QsaShapes& s) {
     const int rows = (int) (s.n_head_kv * s.page_size);
     Runs r{};
-    if (fmt == kKvHybrid) {   // K8V4: int8 K codes, their scales, rotated q4_0 V
+    if (kv_format_is_mixed(fmt)) {
+        r.src[0] = host.k_mixed; r.dst[0] = (uint8_t*) slots.k_mixed;
+        r.src[1] = host.v_mixed; r.dst[1] = (uint8_t*) slots.v_mixed;
+        r.len[0] = rows * kv_mixed_row_bytes(kv_format_k_bits(fmt), s.head_dim);
+        r.len[1] = rows * kv_mixed_row_bytes(kv_format_v_bits(fmt), s.head_dim);
+        r.n = 2;
+    } else if (fmt == kKvHybrid) {   // K8V4: int8 K codes, their scales, rotated q4_0 V
         const int codes = rows * (int) s.head_dim, scales = rows * (int) (s.head_dim / KV_Q8_GROUP) * 2;
         const int v = rows * (int) kv_q4_bytes_per_head((int) s.head_dim);
         r.src[0] = (const uint8_t*) host.k_q;     r.dst[0] = (uint8_t*) slots.k_q;     r.len[0] = codes;
@@ -198,6 +205,9 @@ __global__ void ring_kernel(int32_t* table, long long n_blocks, long long n_slot
 
 uint64_t kv_block_bytes(const QsaShapes& s, int fmt) {
     const uint64_t rows = (uint64_t) (s.n_head_kv * s.page_size);
+    if (kv_format_is_mixed(fmt))
+        return rows * (kv_mixed_row_bytes(kv_format_k_bits(fmt), s.head_dim) +
+                       kv_mixed_row_bytes(kv_format_v_bits(fmt), s.head_dim));
     if (fmt == kKvHybrid)
         return rows * (uint64_t) s.head_dim + rows * (uint64_t) (s.head_dim / KV_Q8_GROUP) * 2 +
                rows * kv_q4_bytes_per_head((int) s.head_dim);

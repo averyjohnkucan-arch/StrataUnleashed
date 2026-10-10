@@ -52,6 +52,7 @@
 #include "strata/kernels/native_rope.hpp"
 #include "strata/kernels/mrope.hpp"
 #include "strata/kernels/kv_q4.hpp"
+#include "strata/kernels/kv_mixed.hpp"
 #include "strata/kernels/qsa.hpp"
 #include "strata/core/native_head.hpp"
 #include "strata/core/verify.hpp"
@@ -2189,8 +2190,8 @@ int main(int argc, char** argv) {
     else if (o.kv == "Q5/Q5" || o.kv == "q5/q5") { mixed_k=5; mixed_v=5; }
     else if (o.kv == "Q5/Q4" || o.kv == "q5/q4") { mixed_k=5; mixed_v=4; }
     strata::core::qsa_set_kv_mixed(mixed_k,mixed_v);
-    if (mixed_k && (o.kv_resident > 0 || o.conversation_cache_mib > 0 || o.kv_grow)) {
-        std::fprintf(stderr,"strata: mixed KV currently requires resident KV and no parked conversation cache\n");
+    if (mixed_k && (o.conversation_cache_mib > 0 || o.kv_grow)) {
+        std::fprintf(stderr,"strata: mixed KV does not yet support elastic KV growth or parked conversation cache\n");
         return 2;
     }
     if (o.kv == "q4") o.kv = "q4_0";
@@ -10919,7 +10920,10 @@ int main(int argc, char** argv) {
                 auto kv_arrays = [&](const strata::core::QsaState& st) {
                     const bool h = st.kv_mode != 0;
                     std::vector<std::pair<const void*, int64_t>> a;
-                    if (st.kv_q4) {
+                    if (st.k_bits) {
+                        a = {{h ? st.host.k_mixed : st.k_mixed, (int64_t) strata::kernels::kv_mixed_row_bytes(st.k_bits, qs.head_dim)},
+                             {h ? st.host.v_mixed : st.v_mixed, (int64_t) strata::kernels::kv_mixed_row_bytes(st.v_bits, qs.head_dim)}};
+                    } else if (st.kv_q4) {
                         const int64_t q4b = (int64_t) strata::kernels::kv_q4_bytes_per_head((int) qs.head_dim);
                         a = {{h ? st.host.k_q4 : st.k_q4, q4b}, {h ? st.host.v_q4 : st.v_q4, q4b}};
                     } else if (st.kv_hybrid) {
@@ -11133,16 +11137,20 @@ int main(int argc, char** argv) {
             if (g.n_qsa_layers() > 0 && ss.qsa_states[ss.qsa_primary()].kv_mode == 1) {
                 // KV streaming, cumulative over the process: blocks the selections named vs blocks read from RAM
                 // (this device's owned ordinals; a split's other stages hold theirs)
-                uint64_t miss = 0, look = 0;
+                uint64_t miss = 0, look = 0, transferred = 0;
+                auto stream_shape = strata::kernels::qsa_real_shapes();
+                stream_shape.n_head_kv = g.n_head_kv; stream_shape.head_dim = g.head_dim;
                 bool over = false;
                 for (int64_t j = 0; j < ss.qsa_alloc; ++j) {
                     const strata::kernels::KvStreamCounters c =
                         strata::kernels::kv_stream_counters(ss.qsa_states[ss.qsa_ord0 + j].map);
                     miss += c.misses; look += c.lookups; over = over || c.overflow;
+                    transferred += c.misses * strata::kernels::kv_block_bytes(stream_shape,
+                        strata::core::qsa_kv_format(ss.qsa_states[ss.qsa_ord0 + j]));
                 }
                 std::fprintf(stderr, "strata serve: KV streaming: %.2f%% of %llu block reads hit VRAM, %.1f MiB read "
                                      "from RAM%s\n", look ? 100.0 * (double) (look - miss) / (double) look : 100.0,
-                             (unsigned long long) look, (double) miss * 4224.0 / 1048576.0,
+                             (unsigned long long) look, (double) transferred / 1048576.0,
                              over ? " - OVERFLOW (too few resident cells)" : "");
             }
             if (sfx_windows > 0)

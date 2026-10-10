@@ -81,7 +81,9 @@ Main-model cache modes:
 
 Q6 pairs are explicit overrides; card-capacity defaults are unchanged. The engine also accepts `--kv q6` as shorthand for `Q6/Q6`; the Unleashed launcher uses the full pair name.
 
-The new mixed modes currently require fully resident KV and do not support `--kv-resident` or parked conversation snapshots (`--conversation-cache-mib`). Existing uniform modes keep their upstream capabilities. No-MTP serving currently disables parked conversation snapshots and suffix drafting.
+Mixed formats, including all Q6 pairs, support KV streaming with the engine option `--kv-resident 20480` (the minimum device budget). The authoritative cache stays in pinned system RAM; selected pages are loaded into GPU slots as needed. `--kv-resident 0` keeps the full cache on the GPU. Streaming does not change cache precision or context capacity. It can reduce GPU memory use, but transfers and prefill staging have a cost.
+
+Mixed formats still do not support elastic KV growth (`--kv-grow`) or parked conversation snapshots (`--conversation-cache-mib`). Existing uniform modes keep their upstream capabilities. No-MTP serving currently disables parked conversation snapshots and suffix drafting.
 
 Native expert paths cover Q4_0, Q4_1, Q4_K, Q5_0, Q5_1, Q5_K, Q6_K, Q8_0, IQ2_XXS, IQ2_XS, IQ2_S, IQ3_XXS, IQ3_S, IQ4_NL, IQ4_XS, IQ1_M and Q2_0, plus **NVFP4 and MXFP4**. GGUF format block sizes still constrain valid row widths; malformed or incompatible tensors are rejected. This is a defined list, not a claim that every GGUF type can serve as an expert tensor. Q2_K, Q3_K and IQ1_S expert tensors are not currently in the native expert dispatch list. Dense tensors supported by the packer can be converted separately. NVFP4 uses CUDA decoding and quantized activation arithmetic; this does not claim a hardware FP4 tensor-core speedup.
 

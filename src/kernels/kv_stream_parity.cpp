@@ -9,8 +9,10 @@
 //   3. no call overflowed, and the hit/miss counters add up;
 //   4. a ring (the MTP drafter's layout) restored from the host copy reads the same values as the resident pool.
 // INT8, FP16, Q4_0 (PR #21) and hybrid K8V4 pools; K8V4's appends are the engine's folded calls (layer.cpp), its host
-// copy written through kv_hybrid_k_half / kv_hybrid_v_half.
+// copy written through kv_hybrid_k_half / kv_hybrid_v_half. Mixed pairs also exercise
+// staging DMA and graph replay after overwriting a token and invalidating residency.
 #include "strata/kernels/kv_q4.hpp"
+#include "strata/kernels/kv_mixed.hpp"
 #include "strata/kernels/kv_q8.hpp"
 #include "strata/kernels/kv_stream.hpp"
 #include "strata/kernels/qsa.hpp"
@@ -52,7 +54,13 @@ struct Pools {   // one K/V pool set of `pages` pages
     k::KvHostPools p;   // reused as a plain pointer bundle
     void alloc(int64_t pages, const k::QsaShapes& s, int fmt, bool host) {
         const size_t rows = (size_t) pages * s.n_head_kv * s.page_size;
-        if (fmt == k::kKvHybrid) {
+        if (k::kv_format_is_mixed(fmt)) {
+            p.k_bits = k::kv_format_k_bits(fmt); p.v_bits = k::kv_format_v_bits(fmt);
+            const size_t kb = rows * k::kv_mixed_row_bytes(p.k_bits, s.head_dim);
+            const size_t vb = rows * k::kv_mixed_row_bytes(p.v_bits, s.head_dim);
+            p.k_mixed = host ? halloc<uint8_t>(kb) : dalloc<uint8_t>(kb);
+            p.v_mixed = host ? halloc<uint8_t>(vb) : dalloc<uint8_t>(vb);
+        } else if (fmt == k::kKvHybrid) {
             const size_t b = rows * k::kv_q4_bytes_per_head((int) s.head_dim);
             p.k_q = host ? halloc<int8_t>(rows * s.head_dim) : dalloc<int8_t>(rows * s.head_dim);
             p.k_scale = host ? halloc<uint16_t>(rows * 4) : dalloc<uint16_t>(rows * 4);
@@ -74,6 +82,7 @@ struct Pools {   // one K/V pool set of `pages` pages
     k::QsaAttnPools attn(const int32_t* table) const {
         k::QsaAttnPools a;
         a.k_pool = p.k_pool; a.v_pool = p.v_pool; a.k_q = p.k_q; a.v_q = p.v_q; a.k_scale = p.k_scale;
+        a.k_mixed=p.k_mixed; a.v_mixed=p.v_mixed; a.k_bits=p.k_bits; a.v_bits=p.v_bits;
         a.v_scale = p.v_scale; a.k_q4 = p.k_q4; a.v_q4 = p.v_q4; a.page_table = table;
         return a;
     }
@@ -81,7 +90,9 @@ struct Pools {   // one K/V pool set of `pages` pages
 
 void append(const Pools& pl, const int32_t* table, const int32_t* step, const float* kc, const float* vc,
             const k::QsaShapes& s, int fmt, const k::KvHostPools* host) {
-    if (fmt == k::kKvHybrid) {   // exactly as qsa_layer: each half folded onto its own pool, host copy by halves
+    if (k::kv_format_is_mixed(fmt)) {
+        k::kv_mixed_append(pl.p.k_mixed,pl.p.v_mixed,pl.p.k_bits,pl.p.v_bits,table,step,0,1,kc,vc,s,nullptr,host);
+    } else if (fmt == k::kKvHybrid) {   // exactly as qsa_layer: each half folded onto its own pool, host copy by halves
         const k::KvHostPools hk = host ? k::kv_hybrid_k_half(*host) : k::KvHostPools{},
                              hv = host ? k::kv_hybrid_v_half(*host) : k::KvHostPools{};
         k::kv_append_q8_step(pl.p.k_q, pl.p.k_q, pl.p.k_scale, pl.p.k_scale, table, step, kc, kc, s, nullptr,
@@ -115,7 +126,8 @@ std::vector<int32_t> selection(int64_t n_kv, int64_t width, std::mt19937& rng) {
 }
 
 bool run(int fmt) {
-    const char* name = fmt == k::kKvHybrid ? "k8v4" : fmt == k::kKvQ4 ? "q4_0" : fmt == k::kKvInt8 ? "int8" : "fp16";
+    char mixed_name[32];std::snprintf(mixed_name,sizeof(mixed_name),"K%d/V%d",k::kv_format_k_bits(fmt),k::kv_format_v_bits(fmt));
+    const char* name = k::kv_format_is_mixed(fmt) ? mixed_name : fmt == k::kKvHybrid ? "k8v4" : fmt == k::kKvQ4 ? "q4_0" : fmt == k::kKvInt8 ? "int8" : "fp16";
     k::QsaShapes s = k::qsa_real_shapes();
     const int64_t N = 40000, n_blocks = (N + 3) / 4, n_slots = 8 * 516 + 700;   // must evict: slots < blocks
     const int64_t cap = k::qsa_selection_width(k::kTopkMaxCells, s), NQ = 8;
@@ -233,6 +245,48 @@ bool run(int fmt) {
         std::printf("  %s ring restore: %s\n", name, ok ? "identical" : "DIFFERS");
         if (!ok) ++bad;
     }
+    if (k::kv_format_is_mixed(fmt)) {
+        Pools stage, mirror;
+        stage.alloc(n_blocks,s,fmt,false);mirror.alloc(n_blocks,s,fmt,true);
+        k::kv_stage_from_host(stage.attn(ident),host.p,fmt,n_blocks,s,nullptr);
+        k::kv_unstage_to_host(stage.attn(ident),mirror.p,fmt,0,n_blocks,s,nullptr);
+        ck(cudaDeviceSynchronize(),"stage roundtrip");
+        const size_t rows=n_blocks*s.n_head_kv*s.page_size;
+        for(int side=0;side<2;++side){
+            const size_t bytes=rows*k::kv_mixed_row_bytes(side?host.p.v_bits:host.p.k_bits,s.head_dim);
+            std::vector<uint8_t> original(bytes),copy(bytes);
+            ck(cudaMemcpy(original.data(),side?host.p.v_mixed:host.p.k_mixed,bytes,cudaMemcpyDefault),"host original");
+            ck(cudaMemcpy(copy.data(),side?mirror.p.v_mixed:mirror.p.k_mixed,bytes,cudaMemcpyDefault),"host mirror");
+            if(original!=copy)++bad;
+        }
+        // Overwrite the last token in a captured graph, mirroring into host and stage.
+        // Resetting residency before each replay forces reload of that overwritten host data.
+        cudaStream_t stream;ck(cudaStreamCreate(&stream),"stream");
+        cudaGraph_t graph;cudaGraphExec_t exec;
+        ck(cudaStreamBeginCapture(stream,cudaStreamCaptureModeGlobal),"capture");
+        k::kv_stream_reset(m,stream);
+        k::kv_mixed_append(ref.p.k_mixed,ref.p.v_mixed,ref.p.k_bits,ref.p.v_bits,ident,step,0,1,kc,vc,s,stream);
+        k::kv_mixed_append(slots.p.k_mixed,slots.p.v_mixed,slots.p.k_bits,slots.p.v_bits,m.page_table,step,0,1,kc,vc,s,stream,&host.p,&stage.p);
+        k::kv_stream_resolve(m,slots.attn(m.page_table),host.p,fmt,ids,steps,1,cap,s,stream);
+        k::qsa_decode_attn_batch(q,ref.attn(ident),ids,steps,cap,s,scratch,out_ref,1,stream);
+        k::qsa_decode_attn_batch(q,slots.attn(m.page_table),ids,steps,cap,s,scratch,out_str,1,stream);
+        ck(cudaStreamEndCapture(stream,&graph),"end capture");
+        ck(cudaGraphInstantiate(&exec,graph,nullptr,nullptr,0),"instantiate");
+        for(int replay=0;replay<3;++replay){
+            for(auto& x:hv)x=nd(rng)*3.f;
+            ck(cudaMemcpy(vc,hv.data(),hv.size()*4,cudaMemcpyHostToDevice),"overwrite values");
+            ck(cudaGraphLaunch(exec,stream),"replay");ck(cudaStreamSynchronize(stream),"replay done");
+            ck(cudaMemcpy(a.data(),out_ref,NH*D*4,cudaMemcpyDeviceToHost),"ref attention");
+            ck(cudaMemcpy(b2.data(),out_str,NH*D*4,cudaMemcpyDeviceToHost),"stream attention");
+            if(std::memcmp(a.data(),b2.data(),NH*D*4)!=0)++bad;
+            k::qsa_decode_attn_batch(q,stage.attn(ident),ids,steps,cap,s,scratch,out_str,1,stream);
+            ck(cudaStreamSynchronize(stream),"stage attention");
+            ck(cudaMemcpy(b2.data(),out_str,NH*D*4,cudaMemcpyDeviceToHost),"stage result");
+            if(std::memcmp(a.data(),b2.data(),NH*D*4)!=0)++bad;
+        }
+        cudaGraphExecDestroy(exec);cudaGraphDestroy(graph);cudaStreamDestroy(stream);
+        std::printf("  %s stage/DMA/graph overwrite: %s\n",name,bad?"FAIL":"identical");
+    }
     return bad == 0;
 }
 }  // namespace
@@ -241,6 +295,8 @@ int main() {
     std::printf("kv_stream_parity: streamed vs resident KV, bitwise\n");
     const bool a = run(k::kKvInt8), b = run(k::kKvF16), c = run(k::kKvQ4), d = run(k::kKvHybrid);
     if (!a || !b || !c || !d) ++g_fail;
+    for (auto pair : {std::pair<int,int>{6,6}, {16,6}, {8,6}, {6,8}, {16,8}, {8,5}, {5,5}, {5,4}})
+        if (!run(k::kv_mixed_format(pair.first,pair.second))) ++g_fail;
     std::printf(g_fail ? "FAIL\n" : "PASS\n");
     return g_fail ? 1 : 0;
 }

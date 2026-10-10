@@ -1,0 +1,689 @@
+{
+  "release": "0.1.41-r3",
+  "date": "2026-10-10",
+  "platform": "Linux/CUDA 13.1, RTX 5000 Ada laptop GPU",
+  "model": "ISTA Qwen3.8-Flash-Next IQ3_S",
+  "engine_sha256": "328bb5515a3b3e4e30f77a4e90d2e8d2894b20b65dda92ba22e030d24f877982",
+  "kernel_tests": {
+    "streaming_formats": 12,
+    "tokens_per_format": 40000,
+    "attention_batches_per_format": 306,
+    "comparison": "bitwise resident vs streamed attention, with eviction and ring restore",
+    "mixed_formats_extra": "staging DMA roundtrip and three captured-graph token overwrite/reload replays",
+    "mixed_storage_attention_pairs": 8
+  },
+  "python_regressions": 38,
+  "real_model_runs": [
+    {
+      "kv": "Q6/Q6",
+      "resident_cells": 20480,
+      "stage_own": true,
+      "context_capacity": 262144,
+      "checks": [
+        {
+          "answer": "4<|im_end|>",
+          "timings": {
+            "generated": 2,
+            "prompt_tokens": 25,
+            "prompt_ms": 391.3,
+            "decode_ms": 119.9,
+            "finish": "stop",
+            "drafts_accepted": 3,
+            "drafts_offered": 3,
+            "reused": 0,
+            "hits": 291,
+            "lookups": 2132,
+            "ram_blobs": 0,
+            "file_blobs": 0,
+            "file_mb": 0.0,
+            "prompt_read": 25,
+            "offloaded": 268
+          }
+        },
+        {
+          "answer": "Paris<|im_end|>",
+          "timings": {
+            "generated": 2,
+            "prompt_tokens": 25,
+            "prompt_ms": 394.8,
+            "decode_ms": 114.6,
+            "finish": "stop",
+            "drafts_accepted": 3,
+            "drafts_offered": 3,
+            "reused": 0,
+            "hits": 246,
+            "lookups": 2092,
+            "ram_blobs": 0,
+            "file_blobs": 0,
+            "file_mb": 0.0,
+            "prompt_read": 25,
+            "offloaded": 308
+          }
+        },
+        {
+          "input_tokens": 512,
+          "output_tokens": 128,
+          "answer": "Database indexes are fundamental structures that significantly enhance the performance of data retrieval operations. To understand their necessity, consider a physical library. If you need to find a specific book, you could scan every shelf sequentially, which is slow and inefficient. Instead, you use the library\u2019s catalog system, which organizes books by title, author, or subject. This catalog acts as an index, allowing you to locate the book\u2019s physical location almost instantly. In a database, an index serves the same purpose: it is a separate data structure that maps values from a column to the physical location of the corresponding rows in the table.\n\nThe most common type",
+          "timings": {
+            "generated": 128,
+            "prompt_tokens": 512,
+            "prompt_ms": 1432.9,
+            "decode_ms": 2725.7,
+            "finish": "length",
+            "drafts_accepted": 71,
+            "drafts_offered": 111,
+            "reused": 0,
+            "hits": 37171,
+            "lookups": 76336,
+            "ram_blobs": 0,
+            "file_blobs": 0,
+            "file_mb": 0.0,
+            "prompt_read": 512,
+            "offloaded": 5264
+          },
+          "prefill_tps": 357.3173284946611,
+          "decode_tps": 46.96041383864696
+        },
+        {
+          "input_tokens": 24576,
+          "output_tokens": 128,
+          "answer": "Database indexes are fundamental structures in relational database management systems (RDBMS) that significantly enhance the speed of data retrieval operations. To understand their necessity, one must first grasp how databases store data. By default, data is stored in tables as rows, often in the order they were inserted. If a user queries for a specific record, such as finding a customer with ID 10045, the database engine typically performs a \"full table scan.\" This means it reads every single row from the beginning to the end until it finds the match. For a table with millions of records, this process is computationally expensive and slow,",
+          "timings": {
+            "generated": 128,
+            "prompt_tokens": 24576,
+            "prompt_ms": 30803.5,
+            "decode_ms": 2564.5,
+            "finish": "length",
+            "drafts_accepted": 75,
+            "drafts_offered": 119,
+            "reused": 0,
+            "hits": 49785,
+            "lookups": 79099,
+            "ram_blobs": 0,
+            "file_blobs": 0,
+            "file_mb": 0.0,
+            "prompt_read": 24576,
+            "offloaded": 3941
+          },
+          "prefill_tps": 797.8314152612528,
+          "decode_tps": 49.912263599142136
+        }
+      ],
+      "stream_counters": [
+        [
+          "93.33",
+          "1440",
+          "0.3"
+        ],
+        [
+          "93.33",
+          "1440",
+          "0.3"
+        ],
+        [
+          "99.34",
+          "294684",
+          "6.1"
+        ],
+        [
+          "96.57",
+          "1065996",
+          "116.2"
+        ]
+      ],
+      "requested_expert_cache": 2000,
+      "actual_expert_slots": 2582
+    },
+    {
+      "kv": "Q6/Q6",
+      "resident_cells": 0,
+      "stage_own": true,
+      "context_capacity": 262144,
+      "checks": [
+        {
+          "answer": "4<|im_end|>",
+          "timings": {
+            "generated": 2,
+            "prompt_tokens": 25,
+            "prompt_ms": 436.0,
+            "decode_ms": 115.6,
+            "finish": "stop",
+            "drafts_accepted": 3,
+            "drafts_offered": 3,
+            "reused": 0,
+            "hits": 291,
+            "lookups": 2132,
+            "ram_blobs": 0,
+            "file_blobs": 0,
+            "file_mb": 0.0,
+            "prompt_read": 25,
+            "offloaded": 268
+          }
+        },
+        {
+          "answer": "Paris<|im_end|>",
+          "timings": {
+            "generated": 2,
+            "prompt_tokens": 25,
+            "prompt_ms": 401.0,
+            "decode_ms": 114.5,
+            "finish": "stop",
+            "drafts_accepted": 3,
+            "drafts_offered": 3,
+            "reused": 0,
+            "hits": 246,
+            "lookups": 2092,
+            "ram_blobs": 0,
+            "file_blobs": 0,
+            "file_mb": 0.0,
+            "prompt_read": 25,
+            "offloaded": 308
+          }
+        },
+        {
+          "input_tokens": 512,
+          "output_tokens": 128,
+          "answer": "Database indexes are fundamental structures that significantly enhance the performance of data retrieval operations. To understand their necessity, consider a physical library. If you need to find a specific book, you could scan every shelf sequentially, which is inefficient. Instead, you use the catalog system, which organizes books by title, author, or subject. This catalog is analogous to a database index. Without an index, a database must perform a \"full table scan,\" reading every single record to find a match. With an index, the database can jump directly to the relevant data, reducing search time from linear complexity to logarithmic complexity.\n\nThe most common type of",
+          "timings": {
+            "generated": 128,
+            "prompt_tokens": 512,
+            "prompt_ms": 1437.3,
+            "decode_ms": 2832.1,
+            "finish": "length",
+            "drafts_accepted": 73,
+            "drafts_offered": 123,
+            "reused": 0,
+            "hits": 39100,
+            "lookups": 81144,
+            "ram_blobs": 0,
+            "file_blobs": 0,
+            "file_mb": 0.0,
+            "prompt_read": 512,
+            "offloaded": 5736
+          },
+          "prefill_tps": 356.223474570375,
+          "decode_tps": 45.196144203947604
+        },
+        {
+          "input_tokens": 24576,
+          "output_tokens": 128,
+          "answer": "Database indexes are fundamental structures in relational database management systems (RDBMS) that significantly enhance the speed of data retrieval operations. To understand their necessity, one must first grasp how databases store data. By default, data is stored in tables as rows, often in the order they were inserted. If a user queries for a specific record, such as finding a customer with ID 1005, the database engine typically performs a \"full table scan.\" This means it reads every single row from the beginning to the end until it finds the match. For a table with ten million rows, this is computationally expensive and slow.\n\nAn",
+          "timings": {
+            "generated": 128,
+            "prompt_tokens": 24576,
+            "prompt_ms": 27128.7,
+            "decode_ms": 2743.4,
+            "finish": "length",
+            "drafts_accepted": 72,
+            "drafts_offered": 111,
+            "reused": 0,
+            "hits": 47925,
+            "lookups": 76363,
+            "ram_blobs": 0,
+            "file_blobs": 0,
+            "file_mb": 0.0,
+            "prompt_read": 24576,
+            "offloaded": 3797
+          },
+          "prefill_tps": 905.9040794435413,
+          "decode_tps": 46.65743238317416
+        }
+      ],
+      "stream_counters": [],
+      "requested_expert_cache": 2000,
+      "actual_expert_slots": 2582
+    },
+    {
+      "kv": "FP16/Q6",
+      "resident_cells": 20480,
+      "stage_own": true,
+      "context_capacity": 262144,
+      "checks": [
+        {
+          "answer": "4<|im_end|>",
+          "timings": {
+            "generated": 2,
+            "prompt_tokens": 25,
+            "prompt_ms": 398.3,
+            "decode_ms": 115.1,
+            "finish": "stop",
+            "drafts_accepted": 3,
+            "drafts_offered": 3,
+            "reused": 0,
+            "hits": 289,
+            "lookups": 2135,
+            "ram_blobs": 0,
+            "file_blobs": 0,
+            "file_mb": 0.0,
+            "prompt_read": 25,
+            "offloaded": 265
+          }
+        },
+        {
+          "answer": "Paris<|im_end|>",
+          "timings": {
+            "generated": 2,
+            "prompt_tokens": 25,
+            "prompt_ms": 401.5,
+            "decode_ms": 115.1,
+            "finish": "stop",
+            "drafts_accepted": 3,
+            "drafts_offered": 3,
+            "reused": 0,
+            "hits": 249,
+            "lookups": 2093,
+            "ram_blobs": 0,
+            "file_blobs": 0,
+            "file_mb": 0.0,
+            "prompt_read": 25,
+            "offloaded": 307
+          }
+        },
+        {
+          "input_tokens": 4419,
+          "output_tokens": 128,
+          "answer": "Database indexes are fundamental structures that significantly enhance the performance of data retrieval operations. To understand their necessity, consider a physical library. If you want to find a specific book, you could scan every shelf from start to finish, a process known as a full table scan. This is inefficient and time-consuming, especially as the collection grows. Instead, libraries use catalogs or indices that map book titles to their specific shelf locations. Similarly, a database index acts as a separate data structure that maps values from a specific column to the physical location of the corresponding rows in the main table.\n\nThe most common type of index is the B-Tree (Bal",
+          "timings": {
+            "generated": 128,
+            "prompt_tokens": 4419,
+            "prompt_ms": 5611.6,
+            "decode_ms": 2853.6,
+            "finish": "length",
+            "drafts_accepted": 70,
+            "drafts_offered": 120,
+            "reused": 0,
+            "hits": 38623,
+            "lookups": 79763,
+            "ram_blobs": 0,
+            "file_blobs": 0,
+            "file_mb": 0.0,
+            "prompt_read": 4419,
+            "offloaded": 5677
+          },
+          "prefill_tps": 787.4759426901418,
+          "decode_tps": 44.8556209700028
+        }
+      ],
+      "stream_counters": [
+        [
+          "93.33",
+          "1440",
+          "0.5"
+        ],
+        [
+          "93.33",
+          "1440",
+          "0.5"
+        ],
+        [
+          "98.80",
+          "1096788",
+          "72.5"
+        ]
+      ],
+      "requested_expert_cache": 2000,
+      "actual_expert_slots": 2582
+    },
+    {
+      "kv": "Q6/Q8",
+      "resident_cells": 20480,
+      "stage_own": true,
+      "context_capacity": 262144,
+      "checks": [
+        {
+          "answer": "4<|im_end|>",
+          "timings": {
+            "generated": 2,
+            "prompt_tokens": 25,
+            "prompt_ms": 395.2,
+            "decode_ms": 114.4,
+            "finish": "stop",
+            "drafts_accepted": 3,
+            "drafts_offered": 3,
+            "reused": 0,
+            "hits": 292,
+            "lookups": 2135,
+            "ram_blobs": 0,
+            "file_blobs": 0,
+            "file_mb": 0.0,
+            "prompt_read": 25,
+            "offloaded": 265
+          }
+        },
+        {
+          "answer": "Paris<|im_end|>",
+          "timings": {
+            "generated": 2,
+            "prompt_tokens": 25,
+            "prompt_ms": 392.8,
+            "decode_ms": 113.2,
+            "finish": "stop",
+            "drafts_accepted": 3,
+            "drafts_offered": 3,
+            "reused": 0,
+            "hits": 252,
+            "lookups": 2096,
+            "ram_blobs": 0,
+            "file_blobs": 0,
+            "file_mb": 0.0,
+            "prompt_read": 25,
+            "offloaded": 304
+          }
+        },
+        {
+          "input_tokens": 4419,
+          "output_tokens": 128,
+          "answer": "Database indexes are fundamental structures that significantly enhance the performance of data retrieval operations. To understand their necessity, consider a physical library. If you want to find a specific book, you could scan every shelf from start to finish, which is inefficient. Instead, you use the library\u2019s catalog system, which organizes books by title, author, or subject. This catalog is analogous to a database index. It allows the database engine to locate specific rows in a table without scanning the entire dataset, a process known as a full table scan.\n\nThe most common type of index is the B-Tree (Balanced Tree) index. Imagine a table",
+          "timings": {
+            "generated": 128,
+            "prompt_tokens": 4419,
+            "prompt_ms": 5650.5,
+            "decode_ms": 2942.0,
+            "finish": "length",
+            "drafts_accepted": 67,
+            "drafts_offered": 120,
+            "reused": 0,
+            "hits": 38904,
+            "lookups": 81204,
+            "ram_blobs": 0,
+            "file_blobs": 0,
+            "file_mb": 0.0,
+            "prompt_read": 4419,
+            "offloaded": 5676
+          },
+          "prefill_tps": 782.0546854260685,
+          "decode_tps": 43.50781781101291
+        }
+      ],
+      "stream_counters": [
+        [
+          "93.33",
+          "1440",
+          "0.4"
+        ],
+        [
+          "93.33",
+          "1440",
+          "0.4"
+        ],
+        [
+          "98.82",
+          "1115304",
+          "48.4"
+        ]
+      ],
+      "requested_expert_cache": 2000,
+      "actual_expert_slots": 2582
+    },
+    {
+      "kv": "Q8/Q6",
+      "resident_cells": 20480,
+      "stage_own": true,
+      "context_capacity": 262144,
+      "checks": [
+        {
+          "answer": "4<|im_end|>",
+          "timings": {
+            "generated": 2,
+            "prompt_tokens": 25,
+            "prompt_ms": 425.6,
+            "decode_ms": 116.1,
+            "finish": "stop",
+            "drafts_accepted": 3,
+            "drafts_offered": 3,
+            "reused": 0,
+            "hits": 290,
+            "lookups": 2132,
+            "ram_blobs": 0,
+            "file_blobs": 0,
+            "file_mb": 0.0,
+            "prompt_read": 25,
+            "offloaded": 268
+          }
+        },
+        {
+          "answer": "Paris<|im_end|>",
+          "timings": {
+            "generated": 2,
+            "prompt_tokens": 25,
+            "prompt_ms": 394.8,
+            "decode_ms": 113.7,
+            "finish": "stop",
+            "drafts_accepted": 3,
+            "drafts_offered": 3,
+            "reused": 0,
+            "hits": 249,
+            "lookups": 2093,
+            "ram_blobs": 0,
+            "file_blobs": 0,
+            "file_mb": 0.0,
+            "prompt_read": 25,
+            "offloaded": 307
+          }
+        },
+        {
+          "input_tokens": 4419,
+          "output_tokens": 128,
+          "answer": "Database indexes are fundamental structures that significantly enhance the performance of data retrieval operations. To understand their necessity, consider a physical library. If you need to find a specific book, you could scan every shelf sequentially, which is inefficient. Instead, you use the library\u2019s catalog system, which organizes books by title, author, or ISBN. This catalog is analogous to a database index. It allows the database engine to locate specific records without scanning the entire table, a process known as a full table scan.\n\nThe most common type of index is the B-Tree (Balanced Tree) index. Imagine a table named `Employees` with columns",
+          "timings": {
+            "generated": 128,
+            "prompt_tokens": 4419,
+            "prompt_ms": 5665.0,
+            "decode_ms": 2923.4,
+            "finish": "length",
+            "drafts_accepted": 69,
+            "drafts_offered": 120,
+            "reused": 0,
+            "hits": 39277,
+            "lookups": 80788,
+            "ram_blobs": 0,
+            "file_blobs": 0,
+            "file_mb": 0.0,
+            "prompt_read": 4419,
+            "offloaded": 5612
+          },
+          "prefill_tps": 780.0529567519859,
+          "decode_tps": 43.784634329889855
+        }
+      ],
+      "stream_counters": [
+        [
+          "93.33",
+          "1440",
+          "0.4"
+        ],
+        [
+          "93.33",
+          "1440",
+          "0.4"
+        ],
+        [
+          "98.81",
+          "1109136",
+          "48.3"
+        ]
+      ],
+      "requested_expert_cache": 2000,
+      "actual_expert_slots": 2582
+    }
+  ],
+  "deterministic_control": {
+    "description": "MTP disabled, PCIe expert share zero, one pool worker, prefill CPU share off, same expert placement and independent staging allocation",
+    "identical_output_tokens": 128,
+    "runs": [
+      {
+        "kv": "Q6/Q6",
+        "resident_cells": 20480,
+        "stage_own": true,
+        "context_capacity": 262144,
+        "checks": [
+          {
+            "answer": "4<|im_end|>",
+            "timings": {
+              "generated": 2,
+              "prompt_tokens": 25,
+              "prompt_ms": 1344.3,
+              "decode_ms": 147.7,
+              "finish": "stop",
+              "drafts_accepted": 0,
+              "drafts_offered": 0,
+              "reused": 0,
+              "hits": 175,
+              "lookups": 960,
+              "ram_blobs": 0,
+              "file_blobs": 0,
+              "file_mb": 0.0,
+              "prompt_read": 25,
+              "offloaded": 0
+            }
+          },
+          {
+            "answer": "Paris<|im_end|>",
+            "timings": {
+              "generated": 2,
+              "prompt_tokens": 25,
+              "prompt_ms": 1357.8,
+              "decode_ms": 151.9,
+              "finish": "stop",
+              "drafts_accepted": 0,
+              "drafts_offered": 0,
+              "reused": 0,
+              "hits": 145,
+              "lookups": 960,
+              "ram_blobs": 0,
+              "file_blobs": 0,
+              "file_mb": 0.0,
+              "prompt_read": 25,
+              "offloaded": 0
+            }
+          },
+          {
+            "input_tokens": 4419,
+            "output_tokens": 128,
+            "answer": "Database indexes are fundamental structures that significantly enhance the performance of data retrieval operations. To understand their necessity, consider a physical library. If you want to find a specific book, you could scan every shelf from start to finish, which is inefficient. Instead, you use the library\u2019s catalog system, which organizes books by title, author, or subject. This catalog is analogous to a database index. It allows the database engine to locate specific rows in a table without scanning the entire dataset, a process known as a full table scan.\n\nThe most common type of index is the B-Tree (Balanced Tree) index. Imagine a table",
+            "timings": {
+              "generated": 128,
+              "prompt_tokens": 4419,
+              "prompt_ms": 19491.2,
+              "decode_ms": 12609.4,
+              "finish": "length",
+              "drafts_accepted": 0,
+              "drafts_offered": 0,
+              "reused": 0,
+              "hits": 32009,
+              "lookups": 61440,
+              "ram_blobs": 0,
+              "file_blobs": 0,
+              "file_mb": 0.0,
+              "prompt_read": 4419,
+              "offloaded": 0
+            },
+            "prefill_tps": 226.7176982433098,
+            "decode_tps": 10.151157073294527
+          }
+        ],
+        "stream_counters": [
+          [
+            "92.86",
+            "1176",
+            "0.3"
+          ],
+          [
+            "92.86",
+            "1176",
+            "0.3"
+          ],
+          [
+            "98.33",
+            "788736",
+            "41.7"
+          ]
+        ],
+        "requested_expert_cache": 2000,
+        "actual_expert_slots": 2582
+      },
+      {
+        "kv": "Q6/Q6",
+        "resident_cells": 0,
+        "stage_own": true,
+        "context_capacity": 262144,
+        "checks": [
+          {
+            "answer": "4<|im_end|>",
+            "timings": {
+              "generated": 2,
+              "prompt_tokens": 25,
+              "prompt_ms": 1355.3,
+              "decode_ms": 147.5,
+              "finish": "stop",
+              "drafts_accepted": 0,
+              "drafts_offered": 0,
+              "reused": 0,
+              "hits": 175,
+              "lookups": 960,
+              "ram_blobs": 0,
+              "file_blobs": 0,
+              "file_mb": 0.0,
+              "prompt_read": 25,
+              "offloaded": 0
+            }
+          },
+          {
+            "answer": "Paris<|im_end|>",
+            "timings": {
+              "generated": 2,
+              "prompt_tokens": 25,
+              "prompt_ms": 1361.2,
+              "decode_ms": 145.3,
+              "finish": "stop",
+              "drafts_accepted": 0,
+              "drafts_offered": 0,
+              "reused": 0,
+              "hits": 145,
+              "lookups": 960,
+              "ram_blobs": 0,
+              "file_blobs": 0,
+              "file_mb": 0.0,
+              "prompt_read": 25,
+              "offloaded": 0
+            }
+          },
+          {
+            "input_tokens": 4419,
+            "output_tokens": 128,
+            "answer": "Database indexes are fundamental structures that significantly enhance the performance of data retrieval operations. To understand their necessity, consider a physical library. If you want to find a specific book, you could scan every shelf from start to finish, which is inefficient. Instead, you use the library\u2019s catalog system, which organizes books by title, author, or subject. This catalog is analogous to a database index. It allows the database engine to locate specific rows in a table without scanning the entire dataset, a process known as a full table scan.\n\nThe most common type of index is the B-Tree (Balanced Tree) index. Imagine a table",
+            "timings": {
+              "generated": 128,
+              "prompt_tokens": 4419,
+              "prompt_ms": 18807.0,
+              "decode_ms": 12594.2,
+              "finish": "length",
+              "drafts_accepted": 0,
+              "drafts_offered": 0,
+              "reused": 0,
+              "hits": 32009,
+              "lookups": 61440,
+              "ram_blobs": 0,
+              "file_blobs": 0,
+              "file_mb": 0.0,
+              "prompt_read": 4419,
+              "offloaded": 0
+            },
+            "prefill_tps": 234.96570425905247,
+            "decode_tps": 10.16340855314351
+          }
+        ],
+        "stream_counters": [],
+        "requested_expert_cache": 2000,
+        "actual_expert_slots": 2582
+      }
+    ]
+  },
+  "limits": [
+    "Single timing samples; speculative replies diverged later, so decode rates are not an identical-token throughput comparison.",
+    "262144-token allocated capacity; longest prompt 24576 tokens; device budget 20480 tokens. Not a full-capacity prompt test.",
+    "Synthetic tests force eviction; real tests verify host reads and correct generation.",
+    "Mixed-format parked conversation snapshots and elastic growth remain unsupported.",
+    "Windows and AMD execution not verified."
+  ]
+}

@@ -824,7 +824,11 @@ uint64_t qsa_state_init(const ModelGeometry& g, int64_t max_cells, void* base, Q
         }
         g_kv_host_bytes += bytes;
         Cursor hc{d};
-        if (st.kv_hybrid) {
+        if (st.k_bits) {
+            st.host.k_bits = st.k_bits; st.host.v_bits = st.v_bits;
+            st.host.k_mixed = hc.take<uint8_t>(hrows * strata::kernels::kv_mixed_row_bytes(st.k_bits, s.head_dim));
+            st.host.v_mixed = hc.take<uint8_t>(hrows * strata::kernels::kv_mixed_row_bytes(st.v_bits, s.head_dim));
+        } else if (st.kv_hybrid) {
             st.host.k_q = hc.take<int8_t>(hrows * s.head_dim);
             st.host.k_scale = hc.take<uint16_t>(hrows * (s.head_dim / strata::kernels::KV_Q8_GROUP));
             st.host.v_q4 = hc.take<uint8_t>(hrows * q4_row);
@@ -1112,7 +1116,7 @@ if (st.kv_rot) {   // rotated K and V (kv_q4.hpp): Q4_0, and INT8 with STRATA_KV
     strata::kernels::fwht256_inplace_cuda(b.vcur, g.n_head_kv, stream);
 }
 if (st.k_bits) {
-    kv_mixed_append(st.k_mixed,st.v_mixed,st.k_bits,st.v_bits,st.page_table,st.step,0,1,b.kcur,b.vcur,s,stream);
+    kv_mixed_append(st.k_mixed,st.v_mixed,st.k_bits,st.v_bits,st.page_table,st.step,0,1,b.kcur,b.vcur,s,stream,&st.host);
 } else if (st.kv_q4) {
     strata::kernels::kv_append_q4_step(st.k_q4, st.v_q4, st.page_table, st.step, b.kcur, b.vcur, s, stream, &st.host);
 } else if (st.kv_int8) kv_append_q8_step(st.k_q, st.v_q, st.k_scale, st.v_scale, st.page_table, st.step, b.kcur, b.vcur, s, stream, &st.host);    else kv_append_step(st.k_pool, st.v_pool, st.page_table, st.step, b.kcur, b.vcur, s, stream, &st.host); } /* not K8V4 */    {        const uint64_t nvk = (uint64_t) g.n_head_kv * g.head_dim;        const uint64_t base = (uint64_t) 2 * g.n_embd + 2 * g.hc + (uint64_t) g.n_head * g.head_dim + 2 * nvk + 8;        if (!st.k_bits && !st.kv_q4 && !st.kv_int8 && !st.kv_hybrid) dump_slot(dump, g, layer, (const float*) st.k_pool, base, nvk / 2, stream);        if (!st.k_bits && !st.kv_q4 && !st.kv_int8 && !st.kv_hybrid) dump_slot(dump, g, layer, (const float*) st.v_pool, base + nvk / 2, nvk / 2, stream);        dump_slot(dump, g, layer, b.vcur, base + nvk, nvk, stream);        dump_slot(dump, g, layer, b.kcur, base + 2 * nvk, nvk, stream);    }    {        const QsaIndexerBuffers ib{st.idx_tail, st.idx_dead, st.idx_pooled, st.idx_block_pos};        if (native_qsa_indexer_enabled()) {

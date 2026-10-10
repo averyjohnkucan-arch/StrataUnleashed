@@ -1149,7 +1149,7 @@ bool Verifier::record_window(int T, cudaStream_t cs, std::string& err) {
                     const QsaState& st = slot_ss(t).qsa_states[qi];   // the row's own K/V (ss's outside a batch)
                     const int32_t* step_t = step_ + t * kStepCount;
                     if (st.k_bits) {
-                        kv_mixed_append(st.k_mixed,st.v_mixed,st.k_bits,st.v_bits,st.page_table,step_t,0,1,kcur_+t*NKV*HD,vcur_+t*NKV*HD,s,cs);
+                        kv_mixed_append(st.k_mixed,st.v_mixed,st.k_bits,st.v_bits,st.page_table,step_t,0,1,kcur_+t*NKV*HD,vcur_+t*NKV*HD,s,cs,&st.host);
                     } else if (st.kv_hybrid) {   // K8V4: the unused half's lanes folded onto the used pool (layer.cpp)
                         const KvHostPools hk = kv_hybrid_k_half(st.host), hv = kv_hybrid_v_half(st.host);
                         const bool mirror = st.host.present();   // streamed: the host copy too

@@ -38,14 +38,23 @@ struct KvHostPools {
     uint16_t* v_scale = nullptr;
     uint8_t* k_q4 = nullptr;      ///< q4_0 mode (kv_q4.hpp): block_q4_0 codes, 144 B per cell and head
     uint8_t* v_q4 = nullptr;
-    bool present() const { return k_pool != nullptr || k_q != nullptr || k_q4 != nullptr; }
+    uint8_t* k_mixed = nullptr;  ///< independently packed K/V, FP16 scales per 32 values
+    uint8_t* v_mixed = nullptr;
+    int k_bits = 0, v_bits = 0;
+    bool present() const { return k_pool != nullptr || k_q != nullptr || k_q4 != nullptr || k_mixed != nullptr; }
 };
 
 /// The KV storage format, for the functions below that move whole blocks (`fmt`): fp16, int8 (+ scales), q4_0, and
 /// K8V4 (`--kv k8v4`: K as int8 codes + scales, V as rotated q4_0 - three runs, `k_q`, `k_scale`, `v_q4`).
+/// Independently packed K/V formats use kv_mixed_format(k_bits, v_bits).
 /// (A bool `int8` argument still reads as kKvF16 / kKvInt8.)  kKvHybrid is 3, the number conversation snapshots
 /// already give K8V4.
 enum KvFormat : int { kKvF16 = 0, kKvInt8 = 1, kKvQ4 = 2, kKvHybrid = 3 };
+// Mixed formats carry both bit widths, so a block mover never assumes equal K/V run sizes.
+inline constexpr int kv_mixed_format(int kb, int vb) { return 256 + (kb << 5) + vb; }
+inline constexpr bool kv_format_is_mixed(int fmt) { return fmt >= 256; }
+inline constexpr int kv_format_k_bits(int fmt) { return (fmt - 256) >> 5; }
+inline constexpr int kv_format_v_bits(int fmt) { return (fmt - 256) & 31; }
 
 /// K8V4's halves as the single-format append kernels see them, so a hybrid layer's host copy (and the prompt path's
 /// staging pool) is written by the same calls that write its VRAM pools: K is "int8 whose V is K", V is "q4_0 whose

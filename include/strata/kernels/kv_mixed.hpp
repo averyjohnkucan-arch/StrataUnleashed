@@ -1,10 +1,14 @@
 #pragma once
 #include "strata/kernels/qsa.hpp"
+#include "strata/kernels/kv_stream.hpp"
 #include <cstdint>
 namespace strata::kernels {
 inline uint64_t kv_mixed_row_bytes(int bits, int dim) { return bits == 16 ? dim * 2ull : (dim / 32ull) * (2 + bits * 4); }
+/// Write each token to resident slots and optional identity-layout host/staging pools.
+/// Missing slot entries are safe when an authoritative host copy is supplied.
 void kv_mixed_append(uint8_t* k, uint8_t* v, int kb, int vb, const int32_t* table,
- const int32_t* step, int64_t pos, int64_t count, const float* K, const float* V, const QsaShapes& s, void* stream);
+ const int32_t* step, int64_t pos, int64_t count, const float* K, const float* V, const QsaShapes& s, void* stream,
+ const KvHostPools* host = nullptr, const KvHostPools* stage = nullptr);
 void kv_mixed_gather(const uint8_t* k, const uint8_t* v, int kb, int vb, const int32_t* table,
  const int32_t* ids, const int32_t* step, int64_t cap, const QsaShapes& s, uint16_t* K, uint16_t* V, void* stream);
 }

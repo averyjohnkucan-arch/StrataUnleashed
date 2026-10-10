@@ -110,6 +110,16 @@ void fixture(int format, int experts, bool zero_qsa, bool ple) {
     check(conversation_snapshot_bytes({image.live.ids,image.live.imgs,image.checkpoints,true},ss,g,draft.st,estimate,error),
           "capture estimate works without CUDA");
     check(estimate == image.bytes(), "estimate covers checkpoint/indexer/spare payloads");
+    if (!zero_qsa) {
+        layers[0].k_bits = 6; layers[0].v_bits = 6;
+        size_t mixed_estimate = 0;
+        check(!conversation_snapshot_bytes({image.live.ids,image.live.imgs,image.checkpoints,true},ss,g,draft.st,mixed_estimate,error),
+              "mixed KV snapshot rejected before any CUDA access");
+        check(!conversation_kv_capture_bytes({},layers[0],g,9,true,mixed_estimate,error)
+              && error.find("mixed KV snapshots are not supported") != std::string::npos,
+              "mixed KV layout reports its unsupported snapshot format");
+        layers[0].k_bits = 0; layers[0].v_bits = 0;
+    }
     auto unchanged = [&] {
         auto pristine = [](const auto& bytes) { return std::all_of(bytes.begin(),bytes.end(),[](uint8_t b){return b==0xa5;}); };
         if (!pristine(gdn) || !pristine(history) || ss.ple_prev[0] != -1 || ss.ple_prev[1] != -1) return false;
