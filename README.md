@@ -101,4 +101,4 @@ Linux execution is tested. Windows launch/build scripts and simulated platform c
 - [Technical note and measurements](docs/paper/Strata-Unleashed.md) · [PDF](docs/paper/Strata-Unleashed.pdf)
 - [Contributing](CONTRIBUTING.md)
 
-Based on **Strata 0.1.38**, with credits to its developers, llama.cpp/ggml, Qwen and the model publishers. [MIT license](LICENSE); model files retain their publishers' licenses. The original [Strata paper](docs/paper/Strata-Paper.pdf) remains available and is separate from this fork's technical note.
+Based on **Strata 0.1.41**, with credits to its developers, llama.cpp/ggml, Qwen and the model publishers. [MIT license](LICENSE); model files retain their publishers' licenses. The original [Strata paper](docs/paper/Strata-Paper.pdf) remains available and is separate from this fork's technical note.

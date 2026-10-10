@@ -25,6 +25,10 @@ struct ConversationCheckpoint {
     std::vector<ConversationImageKey> imgs;
     std::vector<uint8_t> gdn, ple, tails, dead, block_pos;
     uint64_t used = 0; // upstream root-pinned/LRU checkpoint retention
+    // A shared-prefix pin (the request key pin=N): this checkpoint is the read-only prefix many suffix queries branch
+    // from, so retention never evicts it (conv_cache.hpp) and a parked conversation holding it stays parked.  A run-time
+    // mark only: it is not in the session file, a request that pins the same prefix again sets it.
+    bool pinned = false;
     // Ordinary layer-split checkpoints retain each device's running state.
     // Whole-session parking is currently single-GPU and rejects these parts.
     std::vector<ConversationCheckpoint> stage_parts;
@@ -53,12 +57,93 @@ struct ConversationKvReuse {
     std::vector<ConversationKv> kv;
     // Original image extent for validation, and the earliest subsequent rewrite.
     int64_t captured_tokens = 0, unchanged_tokens = 0;
+    // With a layer split: the later stages' own retained K/V, one per stage, same extents (empty: none)
+    std::vector<ConversationKvReuse> stages;
     size_t bytes() const {
-        size_t n = kv.capacity() * sizeof(ConversationKv);
+        size_t n = kv.capacity() * sizeof(ConversationKv) + stages.capacity() * sizeof(ConversationKvReuse);
         for (const auto& layer : kv) n += layer.bytes();
+        for (const auto& s : stages) n += s.bytes();
         return n;
     }
 };
+
+/// Layer-split parking: each running checkpoint holds the first stage's state and, in `stage_parts`, one part per
+/// later stage; a parked conversation keeps them in one image per stage.  `split` MOVES the checkpoints apart (no
+/// running state is copied): the complete ones (a part for each of `stages` stages) into `stage0` and `parts[k]`,
+/// every part carrying the checkpoint's ids / images / LRU stamp, the others aside; `merge` puts them back in their
+/// original order.  merge(split(x)) == x.
+struct ConversationCheckpointSplit {
+    std::vector<ConversationCheckpoint> stage0;
+    std::vector<std::vector<ConversationCheckpoint>> parts;   ///< [stage][checkpoint]
+    std::vector<ConversationCheckpoint> rest;                 ///< not split (no complete set of stage parts)
+    std::vector<bool> complete;                               ///< per original position: in stage0/parts or in rest
+};
+
+inline ConversationCheckpointSplit conversation_checkpoints_split(std::vector<ConversationCheckpoint>&& checks,
+                                                                  size_t stages) {
+    ConversationCheckpointSplit out;
+    out.parts.resize(stages);
+    out.complete.reserve(checks.size());
+    size_t whole = 0;
+    for (const auto& c : checks) {
+        const bool complete = c.stage_parts.size() == stages;
+        out.complete.push_back(complete);
+        whole += complete ? 1 : 0;
+    }
+    out.stage0.reserve(whole);
+    out.rest.reserve(checks.size() - whole);
+    for (auto& parts : out.parts) parts.reserve(whole);
+    // Allocate and copy identity metadata before moving any running state.
+    // If allocation fails, every input checkpoint remains usable by the caller.
+    for (const auto& c : checks) {
+        if (c.stage_parts.size() != stages) continue;
+        for (size_t k = 0; k < stages; ++k) {
+            ConversationCheckpoint part;
+            part.ids = c.ids; part.imgs = c.imgs; part.used = c.used; part.pinned = c.pinned;
+            out.parts[k].push_back(std::move(part));
+        }
+    }
+    size_t w = 0;
+    for (auto& c : checks) {
+        if (c.stage_parts.size() != stages) { out.rest.push_back(std::move(c)); continue; }
+        for (size_t k = 0; k < stages; ++k) {
+            auto& dst = out.parts[k][w];
+            auto& src = c.stage_parts[k];
+            dst.gdn = std::move(src.gdn); dst.ple = std::move(src.ple);
+            dst.tails = std::move(src.tails); dst.dead = std::move(src.dead);
+            dst.block_pos = std::move(src.block_pos);
+        }
+        c.stage_parts.clear();
+        out.stage0.push_back(std::move(c));
+        ++w;
+    }
+    checks.clear();
+    return out;
+}
+
+/// false (and `out` empty) when the parts do not line up: a stage with another number of checkpoints, or a part
+/// whose ids differ from its checkpoint's.
+inline bool conversation_checkpoints_merge(ConversationCheckpointSplit&& split, std::vector<ConversationCheckpoint>& out) {
+    out.clear();
+    for (const auto& p : split.parts)
+        if (p.size() != split.stage0.size()) return false;
+    size_t whole = 0, other = 0;
+    for (bool c : split.complete) (c ? whole : other) += 1;
+    if (!split.complete.empty() && (whole != split.stage0.size() || other != split.rest.size())) return false;
+    if (split.complete.empty()) split.complete.assign(split.stage0.size(), true);   // a restored image: all whole
+    for (size_t j = 0; j < split.stage0.size(); ++j)
+        for (const auto& p : split.parts)
+            if (p[j].ids != split.stage0[j].ids) return false;
+    size_t w = 0, r = 0;
+    for (bool c : split.complete) {
+        if (!c) { out.push_back(std::move(split.rest[r++])); continue; }
+        ConversationCheckpoint cp = std::move(split.stage0[w]);
+        for (auto& p : split.parts) cp.stage_parts.push_back(std::move(p[w]));
+        ++w;
+        out.push_back(std::move(cp));
+    }
+    return true;
+}
 
 struct SavedConversation {
     // Runtime compatibility only; NOT a model/weights identity or disk schema.
@@ -69,10 +154,19 @@ struct SavedConversation {
     std::vector<ConversationCheckpoint> checkpoints;
     std::vector<ConversationKv> kv; // main layers followed by the draft layer
     bool cvec = true;
+    // with a layer split, the later stages' own images, one per stage, in stage order
+    std::vector<SavedConversation> stage_images;
+
+    /// Holds a pinned shared prefix (see ConversationCheckpoint::pinned): the parked-conversation budget keeps it.
+    bool pinned() const {
+        for (const auto& c : checkpoints) if (c.pinned) return true;
+        return false;
+    }
 
     size_t bytes() const {
         size_t n = live.bytes() + checkpoints.capacity() * sizeof(ConversationCheckpoint) +
                    kv.capacity() * sizeof(ConversationKv);
+        for (const auto& s : stage_images) n += s.bytes();
         for (const auto& c : checkpoints) n += c.bytes();
         for (const auto& k : kv) n += k.bytes();
         return n;
@@ -107,16 +201,26 @@ public:
     size_t bytes() const { return bytes_ + reuse_.bytes(); }
     size_t size() const { return entries_.size(); }
     size_t evictions() const { return evictions_; }
+    // the longest parked conversation, in tokens (--kv-grow keeps the K/V that long while it could be restored)
+    int64_t longest_tokens() const {
+        int64_t n = 0;
+        for (const auto& e : entries_) n = std::max<int64_t>(n, (int64_t) e.live.ids.size());
+        return n;
+    }
 
     // Retain only the restored K/V buffers, not duplicate running checkpoints.
     // This optimization never evicts a parked conversation to make itself fit.
-    void retain(std::vector<ConversationKv>&& kv, int64_t tokens) {
+    // `stage_kv`: with a layer split, the later stages' restored K/V (one per stage), retained with the first's.
+    void retain(std::vector<ConversationKv>&& kv, int64_t tokens,
+                std::vector<std::vector<ConversationKv>>&& stage_kv = {}) {
         reuse_ = {};
-        ConversationKvReuse candidate{std::move(kv), tokens, tokens};
+        ConversationKvReuse candidate{std::move(kv), tokens, tokens, {}};
+        for (auto& k : stage_kv) candidate.stages.push_back(ConversationKvReuse{std::move(k), tokens, tokens, {}});
         if (enabled() && candidate.bytes() <= budget_ - bytes_) reuse_ = std::move(candidate);
     }
     void limit_reuse(int64_t first_dirty) {
         reuse_.unchanged_tokens = std::min(reuse_.unchanged_tokens, first_dirty);
+        for (auto& s : reuse_.stages) s.unchanged_tokens = std::min(s.unchanged_tokens, first_dirty);
         if (reuse_.unchanged_tokens <= 0) reuse_ = {};
     }
     ConversationKvReuse take_reuse() { return std::exchange(reuse_, {}); }
@@ -157,12 +261,30 @@ public:
         if (!enabled() || held > budget_ || incoming > budget_ - held) return false;
         if (bytes() > budget_ - held - incoming) reuse_ = {};
         while (!entries_.empty() && (entries_.size() >= slots_ || bytes_ > budget_ - held - incoming)) {
-            bytes_ -= entries_.front().bytes();
-            entries_.pop_front();
-            ++evictions_;
+            // the oldest entry that does not hold a pinned shared prefix leaves; with only pinned ones left the new
+            // image does not fit (the caller skips parking it - the pinned prefix is what the queries come back to)
+            if (!evict_oldest()) return false;
         }
         return true;
     }
+
+    // The parked conversation that has gone unused the longest.  This is make_room()'s loop body, so
+    // the parking path can also free RAM one entry at a time on demand (see the physical-RAM admission
+    // gate in generate.cpp).  A ConversationBuffer is a list of 16 MiB segments and each segment is its
+    // own allocation, far above glibc's mmap threshold, so dropping an entry returns the whole footprint
+    // to the kernel at once - the next admission check reads it back from /proc/meminfo.
+    // False when none can go (empty, or only entries that hold a pinned shared prefix are left).
+    bool evict_oldest() {
+        auto victim = std::find_if(entries_.begin(), entries_.end(), [](const SavedConversation& e) { return !e.pinned(); });
+        if (victim == entries_.end()) return false;
+        bytes_ -= victim->bytes();
+        entries_.erase(victim);
+        ++evictions_;
+        return true;
+    }
+
+    // The slot count, so a caller that evicts in a loop has a bound it did not invent.
+    size_t slots() const { return slots_; }
 
     // #342: drop the parked entries an outgoing conversation (its live tokens and checkpoint chain) supersedes:
     // the same conversation a turn back, whose DEEPEST checkpoint the outgoing chain still holds, so all it adds

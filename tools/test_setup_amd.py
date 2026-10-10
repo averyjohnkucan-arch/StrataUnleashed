@@ -49,7 +49,7 @@ class KfdDetection(unittest.TestCase):
             (110001, 120, 128, "", 16 << 30),                     # gfx1101 without a product name
             (120000, 64, 129, None, 16 << 30),                    # gfx1200, no product_name file
             (120001, 128, 130, "AMD Radeon AI PRO R9700", 32 << 30),
-            (110002, 64, 131, None, 8 << 30),                     # gfx1102: listed, not supported
+            (110002, 64, 131, None, 8 << 30),                     # gfx1102: supported, unvalidated (#938)
             (100306, 4, 132, None, 512 << 20),                    # an integrated gfx1036: listed, not supported
             (110000, 192, 133, "Radeon RX 7900 XTX", 24 << 30),
         ])
@@ -59,11 +59,10 @@ class KfdDetection(unittest.TestCase):
         self.assertEqual(g[0]["name"], setup.AMD_NAMES["gfx1101"])
         self.assertEqual(g[1]["name"], setup.AMD_NAMES["gfx1200"])
         self.assertEqual(g[2]["name"], "AMD Radeon AI PRO R9700")
-        self.assertEqual(g[3]["name"], "AMD Radeon (gfx1102)")
+        self.assertEqual(g[3]["name"], setup.AMD_NAMES["gfx1102"])
         self.assertAlmostEqual(g[2]["vram_gb"], 32.0)
         ok = [x["arch"] for x in g if setup.amd_problem(x) is None]
-        self.assertEqual(ok, ["gfx1101", "gfx1200", "gfx1201", "gfx1100"])
-        self.assertIn("gfx1102", setup.amd_problem(g[3]))
+        self.assertEqual(ok, ["gfx1101", "gfx1200", "gfx1201", "gfx1102", "gfx1100"])
         self.assertIn("gfx1036", setup.amd_problem(g[4]))
 
     def test_no_kfd(self):
@@ -76,6 +75,9 @@ class KfdDetection(unittest.TestCase):
         self.assertTrue(setup.ROCM_INDEXES["gfx1200"].endswith("/gfx120X-all/"))
         self.assertEqual(setup.ROCM_INDEXES["gfx1101"], setup.ROCM_INDEXES["gfx1100"])
         self.assertEqual(setup.ROCM_INDEXES["gfx1200"], setup.ROCM_INDEXES["gfx1201"])
+        # #524: the RX 6700 XT (gfx1031) takes the RDNA2 wheels, as the RX 6800 / 6900 (gfx1030)
+        self.assertEqual(setup.ROCM_INDEXES["gfx1031"], setup.ROCM_INDEXES["gfx1030"])
+        self.assertIsNone(setup.amd_problem({"arch": "gfx1031"}))
 
 
 class GpuLists(unittest.TestCase):
@@ -227,6 +229,22 @@ class WindowsDetection(unittest.TestCase):
         self.assertEqual(g[0]["driver"], "32.0.21013.1000")
         self.assertEqual([setup.amd_problem(x) is None for x in g], [True, False, True])
 
+    def test_rx_6800m_is_gfx1031(self):
+        """#881: PCI 73DF (RX 6700 XT / 6750 XT / 6800M) is gfx1031, not an unknown id."""
+        self.assertEqual(setup.win_amd_arch(0x73DF, "AMD Radeon RX 6800M"), "gfx1031")
+        self.assertIsNone(setup.amd_problem({"arch": "gfx1031"}))
+
+    def test_cpu_vision_build_uses_the_visual_studio_environment(self):
+        """#881: build_vision_cpu on Windows hands cmake_build the vcvars file and a real .bat name (it passed None and
+        an empty name before)."""
+        calls = []
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(setup, "WIN", True),                 mock.patch.object(setup, "find_vcvars", return_value=Path("C:/vs/vcvars64.bat")),                 mock.patch.object(setup, "cmake_build", lambda *a: calls.append(a)),                 mock.patch.object(setup, "ROOT", Path(d)), mock.patch.object(setup.shutil, "copy2"):
+            eng = Path(d) / "engine"
+            eng.mkdir()
+            setup.build_vision_cpu(eng, eng / "BUILD.json", {}, Path("llama"), "src1")
+        self.assertEqual(calls[0][4], Path("C:/vs/vcvars64.bat"))
+        self.assertTrue(calls[0][5].endswith(".bat"))
+
     def test_registry_alone(self):
         """No WMI answer: the registry's own list (which can hold a removed card)."""
         g = setup.amd_gpus_windows([], self.REGISTRY)
@@ -237,7 +255,7 @@ class WindowsDetection(unittest.TestCase):
                            ("AMD Radeon RX 9060 XT", "gfx1200"), ("AMD Radeon RX 7900 GRE", "gfx1100"),
                            ("AMD Radeon PRO W7800", "gfx1100"), ("AMD Radeon RX 7700 XT", "gfx1101"),
                            ("AMD Radeon RX 7600", "gfx1102"), ("AMD Radeon RX 6950 XT", "gfx1030"),
-                           ("AMD Radeon RX 6800M", ""), ("AMD Radeon 780M Graphics", ""), ("AMD Radeon RX 7700S", "")):
+                           ("AMD Radeon RX 6800M", ""), ("AMD Radeon 780M Graphics", "gfx1103"), ("AMD Radeon RX 7700S", "")):
             self.assertEqual(setup.win_amd_arch(None, name), arch, name)
         self.assertEqual(setup.win_amd_arch(0x744C, "whatever"), "gfx1100")
 
@@ -307,7 +325,7 @@ class WindowsDetection(unittest.TestCase):
 
             def publish(meta):
                 with zipfile.ZipFile(pub / setup.WIN_HIP_ASSET, "w") as z:
-                    z.writestr("strata.exe", "engine")
+                    z.writestr(setup.EXE, "engine")       # #975: "strata" on Linux
                     z.writestr("strata-device.exe", "probe")
                     z.writestr("rocm/bin/amdhip64_7.dll", "dll")
                     z.writestr("BUILD.json", json.dumps(meta))
@@ -334,6 +352,81 @@ _HIP_DEVICES = setup.hip_devices                      # the real parser, for the
 
 def setup_hip(text):
     return _HIP_DEVICES(text=text)
+
+
+class CalibrationKey(unittest.TestCase):
+    """#566: a calibration is saved and found again per PC and model (hardware_key).  A HIP config's cards are AMD's,
+    in HIP's numbering - nvidia-smi named them "?" (or another card with that number) before - and setup reuses a
+    saved calibration on Linux HIP.  The NVIDIA key and the settings file's format are unchanged."""
+    AMD = [{"index": 0, "name": "AMD Radeon RX 7900 XTX", "vram_gb": 23.98, "arch": "gfx1100"},
+           {"index": 1, "name": "AMD Radeon RX 7900 XT", "vram_gb": 19.98, "arch": "gfx1100"},
+           {"index": 2, "name": "AMD Radeon (gfx1201)", "vram_gb": 15.92, "arch": "gfx1201"},
+           {"index": 3, "name": "AMD Radeon (gfx1036)", "vram_gb": 0.5, "arch": "gfx1036"}]
+
+    def setUp(self):
+        self.patches = [mock.patch.object(setup, "amd_gpus", lambda *a, **k: [dict(g) for g in self.AMD]),
+                        mock.patch.object(setup, "cpu_info", lambda: ("AMD Ryzen 9 7950X", 16)),
+                        mock.patch.object(setup, "ram_gb", lambda: 63.6)]
+        for p in self.patches:
+            p.start()
+
+    def tearDown(self):
+        for p in self.patches:
+            p.stop()
+
+    @staticmethod
+    def cfg(gpu, backend="hip", ctx="32768"):
+        c = {"model_name": "qwen3.8-flash-next-iq3_xxs", "args": ["--max-context", ctx, "--kv", "int8"], "gpu": gpu}
+        if backend:
+            c["backend"] = backend
+        return c
+
+    def test_hip_key_names_the_amd_card_and_its_arch(self):
+        def no_nvidia(*a, **k):                     # a HIP config never asks nvidia-smi (a PC with both kinds)
+            raise AssertionError("gpu_info called for a HIP config")
+        with mock.patch.object(setup, "gpu_info", no_nvidia):
+            self.assertEqual(setup.hardware_key(self.cfg(0)),
+                             "AMD Radeon RX 7900 XTX (gfx1100)|24GB|AMD Ryzen 9 7950X|64GB|qwen3.8-flash-next-iq3_xxs|"
+                             "32768|text")
+            # the arch is not repeated when the name already holds it (no product name in sysfs)
+            self.assertTrue(setup.hardware_key(self.cfg(2)).startswith("AMD Radeon (gfx1201)|16GB|"))
+
+    def test_two_cards_of_one_arch_are_two_keys(self):
+        keys = {setup.hardware_key(self.cfg(i)) for i in (0, 1, 2)}
+        self.assertEqual(len(keys), 3)
+
+    def test_a_split_names_every_card(self):
+        self.assertTrue(setup.hardware_key(self.cfg([1, 0])).startswith(
+            "AMD Radeon RX 7900 XT (gfx1100) + AMD Radeon RX 7900 XTX (gfx1100)|44GB|"))
+
+    def test_no_gpu_in_the_config_is_the_supported_card_with_the_most_vram(self):
+        self.assertTrue(setup.hardware_key(self.cfg(None)).startswith("AMD Radeon RX 7900 XTX (gfx1100)|24GB|"))
+
+    def test_a_card_that_is_gone_is_unknown(self):
+        self.assertTrue(setup.hardware_key(self.cfg(7)).startswith("?|0GB|"))
+
+    def test_nvidia_key_unchanged(self):
+        def amd(*a, **k):
+            raise AssertionError("amd_gpus called for an NVIDIA config")
+        with mock.patch.object(setup, "amd_gpus", amd), \
+                mock.patch.object(setup, "gpu_info", lambda i=None: {"name": "NVIDIA GeForce RTX 5070", "vram_gb": 11.94}):
+            self.assertEqual(setup.hardware_key(self.cfg(0, backend=None)),
+                             "NVIDIA GeForce RTX 5070|12GB|AMD Ryzen 9 7950X|64GB|qwen3.8-flash-next-iq3_xxs|32768|text")
+            self.assertEqual(setup.hardware_key(self.cfg([0, 1], backend="cuda")),
+                             "NVIDIA GeForce RTX 5070 + NVIDIA GeForce RTX 5070|24GB|AMD Ryzen 9 7950X|64GB|"
+                             "qwen3.8-flash-next-iq3_xxs|32768|text")
+
+    def test_setup_reuses_a_saved_calibration_on_linux_hip(self):
+        cfg = self.cfg(1)
+        saved = {"settings": {"pcie_frac": 0.0}, "tok_s": 40.1, "date": "2026-10-03"}
+        other = {"settings": {"pcie_frac": 0.5}, "tok_s": 50.0, "date": "2026-10-02"}
+        store = {"calibration": {setup.hardware_key(cfg): saved, setup.hardware_key(self.cfg(0)): other}}
+        with mock.patch.object(setup, "load_settings", lambda: store):
+            with mock.patch.object(setup, "WIN", False):
+                self.assertEqual(setup.setup_calibration(cfg, hip=True), saved)       # its own card's, not the XTX's
+                self.assertIsNone(setup.setup_calibration(self.cfg(2), hip=True))     # never tuned on that card
+            with mock.patch.object(setup, "WIN", True):
+                self.assertIsNone(setup.setup_calibration(cfg, hip=True))             # Windows HIP: defaults for now
 
 
 class WindowsHipVision(unittest.TestCase):
@@ -370,6 +463,61 @@ class HipRuntimeBesideExe(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             setup.hip_runtime_beside_exe(Path(d))                   # no BUILD.json (a CUDA or Linux engine)
             self.assertEqual(list(Path(d).iterdir()), [])
+
+
+class DeviceAccess(unittest.TestCase):
+    """Linux AMD: /dev/kfd and the render nodes must be openable by the user; setup warns, never refuses."""
+
+    def dev(self, d, kfd=True, nodes=("renderD128",)):
+        root = Path(d)
+        (root / "dri").mkdir()
+        if kfd:
+            (root / "kfd").write_text("")
+        for n in nodes:
+            (root / "dri" / n).write_text("")
+        return str(root)
+
+    def test_accessible_is_silent(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.assertIsNone(setup.amd_device_access_problem(self.dev(d), access=lambda p, m: True))
+
+    def test_no_kfd_is_not_this_problem(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.assertIsNone(setup.amd_device_access_problem(self.dev(d, kfd=False), access=lambda p, m: False))
+
+    def test_kfd_denied_names_the_fix(self):
+        with tempfile.TemporaryDirectory() as d:
+            msg = setup.amd_device_access_problem(self.dev(d), access=lambda p, m: not p.endswith("kfd"))
+            self.assertIn("kfd", msg)
+            self.assertNotIn("renderD128", msg)
+            self.assertIn("sudo usermod -aG render,video $USER", msg)
+            self.assertIn("log out and in", msg)
+
+    def test_render_node_denied(self):
+        with tempfile.TemporaryDirectory() as d:
+            msg = setup.amd_device_access_problem(self.dev(d), access=lambda p, m: "renderD" not in p)
+            self.assertIn("renderD128", msg)
+            self.assertNotIn("/kfd", msg)
+
+    def test_engine_names_the_permission_not_another_program(self):
+        src = (Path(setup.__file__).resolve().parent / "src/program/generate.cpp").read_text(encoding="utf-8")
+        i = src.index("cannot open /dev/kfd")
+        guard = src[src.rindex("#if", 0, i):i]
+        self.assertIn("cudaGetDeviceCount", guard)
+        self.assertIn('access("/dev/kfd", R_OK | W_OK)', guard)
+        self.assertIn("STRATA_USE_HIP", guard)               # CUDA builds keep the "another program" text
+        self.assertIn("another program (or an engine that is still exiting)", src)
+
+
+class TdrPointer(unittest.TestCase):
+    def test_setup_points_windows_gfx12_to_the_entry(self):
+        src = Path(setup.__file__).read_text(encoding="utf-8")
+        self.assertIn('WIN and str(gpu.get("arch") or "").startswith("gfx12")', src)
+        doc = (Path(setup.__file__).resolve().parent / "docs/TROUBLESHOOTING.md").read_text(encoding="utf-8")
+        self.assertIn("Windows AMD: the driver resets", doc)
+        for env in ("STRATA_PF_STEP_SYNC", "STRATA_KV_HOST_DMA"):
+            self.assertIn(env, doc)
+            self.assertIn(env, (Path(setup.__file__).resolve().parent / "src/prefill/prefill.cpp").read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":

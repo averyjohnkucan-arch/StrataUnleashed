@@ -2,6 +2,7 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <vector>
 
 using namespace strata::core;
 
@@ -96,6 +97,37 @@ int main() {
         check(cache.put(image({5, 6})), "evict oldest by slot limit");
         check(cache.best(b, {}, true).tokens == 0 && cache.best(a, {}, true).tokens == 3, "B evicted before A");
         check(cache.evictions() == 1, "eviction counter");
+    }
+    {
+        // evict_oldest(): the physical-RAM admission gate in generate.cpp frees parked conversations
+        // one at a time and re-checks the host's free memory, so this has to be exactly the oldest-first
+        // step make_room() takes - same accounting, same counters - and it has to stop at empty.
+        ConversationCache cache(4096, 4);
+        cache.put(image({1, 2, 3}));
+        cache.put(image({9, 8, 7}));
+        check(cache.size() == 2 && cache.slots() == 4, "slots() reports the configured limit");
+        const size_t both = cache.bytes();
+        check(cache.evict_oldest(), "evict_oldest reports an eviction");
+        check(cache.size() == 1 && cache.evictions() == 1, "evict_oldest drops exactly one, oldest first");
+        check(cache.best(a, {}, true).tokens == 0 && cache.best(b, {}, true).tokens == 3,
+              "the oldest conversation went, the newest stayed");
+        check(cache.bytes() == both - image({1, 2, 3}).bytes(), "evict_oldest releases the entry's bytes");
+        cache.evict_oldest();
+        check(cache.size() == 0 && cache.bytes() == 0, "evicting the last parked conversation empties the cache");
+        check(!cache.evict_oldest(), "the gate's loop can reach an empty cache: false");
+        check(cache.size() == 0 && cache.evictions() == 2, "evict_oldest on an empty cache is a no-op");
+    }
+    {   // the RAM gate's eviction skips a conversation that holds a pinned shared prefix, and says so (false)
+        ConversationCache cache(1 << 20, 4);
+        auto pinned = image({1, 2, 3});
+        pinned.checkpoints.push_back(ConversationCheckpoint{});
+        pinned.checkpoints.back().ids = {1, 2};
+        pinned.checkpoints.back().pinned = true;
+        pinned.checkpoints.back().gdn.resize(64, 1);
+        cache.put(std::move(pinned));
+        cache.put(image({9, 8, 7}));
+        check(cache.evict_oldest() && cache.size() == 1, "the oldest unpinned conversation went (the pinned one is older)");
+        check(!cache.evict_oldest() && cache.size() == 1, "only a pinned one is left: nothing more can go");
     }
     {
         auto s = image({1, 2, 3});
@@ -208,6 +240,121 @@ int main() {
         check(!disabled.enabled() && !no_slots.enabled(), "both disable switches");
         check(!disabled.put(image({1,2,3})) && !no_slots.put(image({1,2,3})), "disabled cache stores nothing");
         check(disabled.best(a,{},true).tokens == 0, "disabled cache has no matches");
+    }
+    {
+        // layer-split parking: checkpoints moved apart into stage parts and put back, no running state copied
+        auto running = [](std::initializer_list<int32_t> ids, uint8_t salt, size_t parts) {
+            ConversationCheckpoint c;
+            c.ids = ids;
+            c.gdn.assign(256, salt);
+            c.tails.assign(32, uint8_t(salt + 1));
+            c.used = salt;
+            for (size_t k = 0; k < parts; ++k) {
+                ConversationCheckpoint p;
+                p.gdn.assign(128, uint8_t(salt + 10 + k));
+                c.stage_parts.push_back(std::move(p));
+            }
+            return c;
+        };
+        std::vector<ConversationCheckpoint> checks;
+        checks.push_back(running({1, 2}, 3, 2));
+        checks.push_back(running({1, 2, 3}, 5, 1));       // an incomplete set: kept aside, put back in place
+        checks.push_back(running({1, 2, 3, 4}, 7, 2));
+        const auto original = checks;
+        const uint8_t* gdn0 = checks[0].gdn.data();
+        const uint8_t* part1 = checks[2].stage_parts[1].gdn.data();
+        auto split = conversation_checkpoints_split(std::move(checks), 2);
+        check(checks.empty() && split.stage0.size() == 2 && split.rest.size() == 1 && split.parts.size() == 2 &&
+              split.parts[0].size() == 2 && split.parts[1].size() == 2, "split: complete checkpoints apart, the other aside");
+        check(split.stage0[0].stage_parts.empty() && split.parts[1][1].ids == original[2].ids &&
+              split.parts[1][1].used == original[2].used && split.parts[0][0].gdn == original[0].stage_parts[0].gdn,
+              "split: every stage part carries its checkpoint's ids and LRU stamp");
+        check(split.stage0[0].gdn.data() == gdn0 && split.parts[1][1].gdn.data() == part1,
+              "split moves the running state (same buffers, no copy)");
+        std::vector<ConversationCheckpoint> back;
+        check(conversation_checkpoints_merge(std::move(split), back) && back.size() == 3, "merge puts them back");
+        bool same = true;
+        for (size_t j = 0; j < back.size(); ++j) {
+            same = same && back[j].ids == original[j].ids && back[j].gdn == original[j].gdn &&
+                   back[j].tails == original[j].tails && back[j].used == original[j].used &&
+                   back[j].stage_parts.size() == original[j].stage_parts.size();
+            for (size_t k = 0; same && k < back[j].stage_parts.size(); ++k)
+                same = back[j].stage_parts[k].gdn == original[j].stage_parts[k].gdn;
+        }
+        check(same, "merge(split(x)) == x, in the original order");
+        check(back[0].gdn.data() == gdn0 && back[2].stage_parts[1].gdn.data() == part1, "merge moves them back too");
+
+        auto torn = conversation_checkpoints_split(std::vector<ConversationCheckpoint>(original), 2);
+        torn.parts[1].pop_back();
+        check(!conversation_checkpoints_merge(std::move(torn), back) && back.empty(), "a stage short of a part is refused");
+        auto mixed = conversation_checkpoints_split(std::vector<ConversationCheckpoint>(original), 2);
+        mixed.parts[0][0].ids = {9, 9};
+        check(!conversation_checkpoints_merge(std::move(mixed), back) && back.empty(), "a part of another checkpoint is refused");
+        // a restored image: stage 0's checkpoints and each stage's, with no record of an incomplete one
+        ConversationCheckpointSplit restored;
+        restored.stage0.push_back(running({4, 5}, 11, 0));
+        restored.parts.resize(2);
+        for (auto& p : restored.parts) { auto c = running({4, 5}, 12, 0); p.push_back(std::move(c)); }
+        check(conversation_checkpoints_merge(std::move(restored), back) && back.size() == 1 &&
+              back[0].stage_parts.size() == 2, "a restored image's parts are all whole");
+        auto none = conversation_checkpoints_split({}, 3);
+        check(conversation_checkpoints_merge(std::move(none), back) && back.empty(), "no checkpoints: nothing to do");
+    }
+    {
+        // the later stages' retained K/V, kept with the first stage's and limited together
+        auto kv = [](size_t n) {
+            std::vector<ConversationKv> v(2);
+            for (auto& l : v) l.k.resize(n, 1);
+            return v;
+        };
+        ConversationCache cache(1 << 20, 4);
+        std::vector<std::vector<ConversationKv>> stage_kv;
+        stage_kv.push_back(kv(1000));
+        stage_kv.push_back(kv(2000));
+        cache.retain(kv(500), 40, std::move(stage_kv));
+        check(cache.retained_bytes() >= 2 * (500 + 1000 + 2000), "retained bytes count every stage");
+        cache.limit_reuse(30);
+        auto r = cache.take_reuse();
+        check(r.kv.size() == 2 && r.stages.size() == 2 && r.unchanged_tokens == 30 &&
+              r.stages[0].unchanged_tokens == 30 && r.stages[1].unchanged_tokens == 30 &&
+              r.stages[1].captured_tokens == 40, "every stage's reuse is limited to the first rewrite");
+        check(cache.retained_bytes() == 0, "taken once");
+        std::vector<std::vector<ConversationKv>> big;
+        big.push_back(kv(1 << 20));
+        cache.retain(kv(500), 40, std::move(big));
+        check(cache.retained_bytes() == 0, "a stage's K/V over the budget drops the whole reuse");
+        std::vector<std::vector<ConversationKv>> one;
+        one.push_back(kv(100));
+        cache.retain(kv(500), 40, std::move(one));
+        cache.limit_reuse(0);
+        check(cache.retained_bytes() == 0, "a rewrite from the start drops every stage's reuse");
+        cache.retain(kv(500), 40);
+        r = cache.take_reuse();
+        check(r.kv.size() == 2 && r.stages.empty(), "no layer split: no stage reuse, as before");
+    }
+    {   // pin=N: a parked conversation that holds a pinned shared prefix is not the one evicted
+        const size_t one = image({1,2,3}).bytes();
+        auto pinned = image({1,2,3});
+        pinned.checkpoints.push_back(ConversationCheckpoint{});
+        pinned.checkpoints.back().ids = {1,2};
+        pinned.checkpoints.back().pinned = true;
+        pinned.checkpoints.back().gdn.resize(64, 1);
+        const size_t pinned_bytes = pinned.bytes();
+        ConversationCache big(pinned_bytes + one * 2 + 64, 3);
+        check(pinned.pinned() && !image({1,2,3}).pinned(), "a conversation is pinned when one of its checkpoints is");
+        check(big.put(std::move(pinned)), "the pinned conversation is parked first (the oldest)");
+        check(big.put(image({7,8,9})) && big.put(image({4,5,6})) && big.size() == 3, "two more fill the slots");
+        check(big.put(image({10,11,12})) && big.size() == 3 && big.evictions() == 1,
+              "a fourth evicts the oldest unpinned one");
+        check(big.best(std::vector<int32_t>{1,2,9,9}, {}, true).tokens == 2, "the pinned prefix is still found");
+        ConversationCache tiny(pinned_bytes + 8, 2);
+        auto p2 = image({1,2,3});
+        p2.checkpoints.push_back(ConversationCheckpoint{});
+        p2.checkpoints.back().ids = {1,2};
+        p2.checkpoints.back().pinned = true;
+        p2.checkpoints.back().gdn.resize(64, 1);
+        check(tiny.put(std::move(p2)), "a pinned one fits an empty cache");
+        check(!tiny.put(image({7,8,9})) && tiny.size() == 1, "nothing else fits beside it: parking is refused, the pin stays");
     }
     std::printf("conversation_cache_test: %d checks passed\n", checks);
 }

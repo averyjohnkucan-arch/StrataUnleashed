@@ -1,3 +1,17 @@
+# Strata Unleashed 0.1.41-r1
+
+Merged upstream Strata 0.1.41 (fb58e0d, October 8, 2026), retaining Unleashed's model picker, downloads, tuning policy, extended native weight formats, independent K/V precision, optional MTP, and PLE format support.
+
+The engine now includes upstream Intel AVX-VNNI and per-core gathered expert decoding, interleaved CUDA verify projections, short-prompt CPU/GPU expert sharing, and the updated expert I/O and prefill planner. Existing tuning results should be measured again with this engine. No whole-engine speedup is promised from kernel benchmarks.
+
+The installed media extension is retained: SVE1 image and SVE2 video embedding records use their respective image/video padding tokens, with context bounds and media-kind checks. Existing image/video encoders remain compatible.
+
+Merge integration keeps mixed KV on its resident layout and per-token append path, prevents it from entering elastic KV or ordinary block movers, extends upstream's unified PLE registry with Q4_1/F16/F32, preserves legal GGUF padding, and retains failed-start child cleanup in the server. CUDA MMQ exports its cuBLAS/driver link dependencies for standalone tests.
+
+Experimental pinned stage buffers remain off by default, following upstream's IQ3_S corruption finding. Model precision, context capacity, and routing are not reduced by this revision.
+
+Validation on Linux/Ada: 107 Python regression tests passed; the native suite passed 97 cases and skipped its AVX-512-only expert test. Its memory-lock test passed separately with the required limit raised. Its artifact-dependent PLE block test could not run because its captured model fixtures are not installed. Five mixed-KV storage/attention checks and additional NVFP4/MXFP4/Q4_1/Q6_K synthetic expert checks passed. Installed-model deployment results are reported separately; Windows execution is not verified.
+
 # Strata Unleashed 0.1.38-r6
 
 - Reservation prompts accept explicit MiB/GiB and decimal MB/GB units and echo the interpreted free-memory amount. Bare 4096/8192 remain 4/8 GiB. Inputs such as `4096mb` and `8192mb` are now accepted as decimal MB, rounded up to whole MiB.

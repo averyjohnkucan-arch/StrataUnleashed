@@ -120,6 +120,9 @@ inline void dequantize_q5_0(const uint8_t* block, float* out) {
         out[j + 16] = (float)(x1 - 16) * d;
     }
 }
+// ---- Q5_1: 32 elements from a 24-byte block: fp16 d, fp16 m, then Q5_0's qh[4] and qs[16]. The 5-bit codes are
+// unsigned and the block's minimum m is added instead of Q5_0's fixed -16 offset (dequantize_row_q5_1).
+
 // ---- IQ4_NL: 32 elements from an 18-byte block. Non-linear 4-bit codebook, NOT a linear grid, so
 // the table must be exact. Copied verbatim from ggml-common.h `kvalues_iq4nl` at 3cf03257:
 //     -127, -104, -83, -65, -49, -35, -22, -10, 1, 13, 25, 38, 53, 69, 89, 113
