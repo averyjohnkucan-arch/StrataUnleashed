@@ -622,6 +622,12 @@ class StrataEngine:
             self.info["version"] = json.loads((Path(exe).parent / "BUILD.json").read_text()).get("version")
         except (OSError, ValueError):
             self.info["version"] = None
+        if "slot_cv" not in self.__dict__:
+            self.slot_cv = threading.Condition()
+            self.waiting = 0                            # requests waiting for the control lines (ctl)
+            self.wait_lens: list[list[int]] = []        # ... their prompt lengths (a long read gives way to short ones)
+            self.ctl_epoch = 0                          # how often the control lines were taken
+            self.ctl = threading.Lock()                 # one admission or solo request on the control lines at a time
         if lazy:
             return
         self.unloaded = False            # `ended` stays True until READY (below): not alive while starting (#344)
@@ -734,12 +740,6 @@ class StrataEngine:
             # while requests still wait on it (they hold these very objects), so it is made once and kept: new ones
             # would leave the waiters on a lock and a condition nobody notifies, with their counts missing from the
             # new lists.
-            if "slot_cv" not in self.__dict__:
-                self.slot_cv = threading.Condition()
-                self.waiting = 0                            # requests waiting for the control lines (ctl)
-                self.wait_lens: list[list[int]] = []        # ... their prompt lengths (a long read gives way to short ones)
-                self.ctl_epoch = 0                          # how often the control lines were taken
-                self.ctl = threading.Lock()                 # one admission or solo request on the control lines at a time
             self.gen = self.__dict__.get("gen", 0) + 1      # which engine process this is (a request notes its own)
             self._ctl_erred = False                         # #1059: the control lines ended on an ERR
             self._yielded = None                            # (slot, tokens read): the last request on them gave way
@@ -879,9 +879,12 @@ class StrataEngine:
                 try:
                     self.__init__(*self.spawn)
                     break
+                except GpuBusy:
+                    raise
                 except RuntimeError:
                     try:
-                        self.proc.wait(timeout=60)
+                        if self.proc is not None:
+                            self.proc.wait(timeout=60)
                     except (subprocess.TimeoutExpired, OSError):
                         pass
                     if i == tries - 1:
