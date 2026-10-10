@@ -117,7 +117,7 @@ def main():
             "version": VERSION,
             "target": target,
             "source_commit": srcid,
-            "upstream_commit": "99f3dbd0b21d1401b3769e0c0d963913607f380b",
+            "upstream_commit": "fb58e0dbc8399662c0e47c76578c6e878b14f6cf",
             "upstream_version": ENGINE_VERSION,
             "kind": (
                 "binary-and-source" if binary and binary.is_file() else "source-build"
@@ -129,7 +129,7 @@ def main():
                 else None
             ),
             "validation": (
-                "Linux Q5 native-context validation and CUDA mixed-KV parity; see docs/UNLEASHED-NATIVE-VALIDATION.json"
+                "Linux/CUDA: 110 Python tests, 97 native cases, separate memory-lock test, five mixed-KV pairs, four extended expert pairs, and 14 installed-profile smoke checks passed. AVX-512 test skipped; artifact PLE fixture unavailable. See RELEASE-NOTES.md."
                 if target.startswith("linux")
                 else "Windows build/run not validated in the Linux development environment"
             ),
