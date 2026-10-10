@@ -1,3 +1,11 @@
+# Strata Unleashed 0.1.41-r2
+
+Adds explicit `FP16/Q6`, `Q6/Q8`, and `Q6/Q6` cache options to the engine and Unleashed launcher, alongside existing `Q8/Q6`. The engine accepts `--kv q6` as shorthand for `Q6/Q6`; the launcher uses full pair names. Card-capacity defaults are unchanged.
+
+Q6/Q6 uses 832 bytes per token per main-model QSA layer versus 2048 for FP16/FP16, about 59% less KV storage. Total GPU memory also includes model weights, indexers, scratch and MTP. This is not a speed or quality claim. These modes require fully resident KV (`--kv-resident 0`), no parked conversation cache, and no elastic KV growth.
+
+Validation: 38 Python regression tests, eight CUDA mixed-KV storage/attention pairs, and 24 CLI storage-guard checks passed. The GPU test now includes Q6 keys, different K/V data, zero-value groups, remapped pages, and device-step appends across a page boundary; it is registered with CTest. All four Q6 pairs passed real IQ3_S inference with MTP, allocating 262,144 tokens and processing a 4,419-token prompt in 1,024-token chunks. Full-capacity prompt quality, Windows and AMD execution are unverified. [Validation record](docs/Q6-KV-VALIDATION.json).
+
 # Strata Unleashed 0.1.41-r1
 
 Merged upstream Strata 0.1.41 (fb58e0d, October 8, 2026), retaining Unleashed's model picker, downloads, tuning policy, extended native weight formats, independent K/V precision, optional MTP, and PLE format support.

@@ -67,14 +67,19 @@ Main-model cache modes:
 |---|---|---:|
 | `FP16/FP16` | FP16 / FP16 | 2048 |
 | `FP16/Q8` | FP16 / 8-bit | 1568 |
+| `FP16/Q6` | FP16 / 6-bit | 1440 |
 | `Q8/Q8` | 8-bit / 8-bit | 1056 |
 | `Q8/Q6` | 8-bit / 6-bit | 960 |
+| `Q6/Q8` | 6-bit / 8-bit | 960 |
+| `Q6/Q6` | 6-bit / 6-bit | 832 |
 | `Q8/Q5` | 8-bit / 5-bit | 896 |
 | `Q5/Q5` | 5-bit / 5-bit | 704 |
 | `Q5/Q4` | 5-bit / 4-bit | 640 |
 | `Q4/Q4` | 4-bit / 4-bit | 576 |
 
 *Two KV heads, 256 values per head. Excludes indexer, page tables, graph scratch and other model memory. New mixed modes use FP16 scales per 32 values and packed symmetric codes after the existing Hadamard rotation. Q5/Q6 here name cache precision, not GGUF Q5_K/Q6_K weights. The MTP drafter retains a supported existing cache layout.
+
+Q6 pairs are explicit overrides; card-capacity defaults are unchanged. The engine also accepts `--kv q6` as shorthand for `Q6/Q6`; the Unleashed launcher uses the full pair name.
 
 The new mixed modes currently require fully resident KV and do not support `--kv-resident` or parked conversation snapshots (`--conversation-cache-mib`). Existing uniform modes keep their upstream capabilities. No-MTP serving currently disables parked conversation snapshots and suffix drafting.
 

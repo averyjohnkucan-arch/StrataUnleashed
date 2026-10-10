@@ -1531,6 +1531,9 @@ endif()
 if(STRATA_ENABLE_CUDA AND STRATA_NATIVE_EXPERTS)
   add_executable(kv_mixed_parity src/kernels/kv_mixed_parity.cpp)
   target_link_libraries(kv_mixed_parity PRIVATE strata_kernels strata_artifact ${_strata_gpu_runtime_target})
+  if(STRATA_BUILD_TESTS)
+    add_test(NAME kv_mixed_parity COMMAND kv_mixed_parity)
+  endif()
 endif()
 
 # ---- HIP gfx906: every CUDA source of the tree (and the ggml-cuda MMQ sources) is compiled as HIP ----

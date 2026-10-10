@@ -7,8 +7,11 @@ PREFILL_TOKENS = NATIVE_CONTEXT - REPLY_TOKENS - CONTEXT_SLACK
 KV_FORMATS = (
     "FP16/FP16",
     "FP16/Q8",
+    "FP16/Q6",
     "Q8/Q8",
     "Q8/Q6",
+    "Q6/Q8",
+    "Q6/Q6",
     "Q8/Q5",
     "Q5/Q5",
     "Q5/Q4",

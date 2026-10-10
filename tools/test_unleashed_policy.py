@@ -9,6 +9,8 @@ from tools.unleashed_policy import (
     NATIVE_CONTEXT,
     PREFILL_TOKENS,
     default_kv,
+    kv_cache_bytes,
+    KV_FORMATS,
     native_args,
 )
 from tools.unleashed_tune import Tuner
@@ -17,6 +19,12 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class PolicyTests(unittest.TestCase):
+    def test_q6_pairs_and_native_context_memory(self):
+        for pair, per_cell in (("FP16/Q6", 1440), ("Q8/Q6", 960), ("Q6/Q8", 960), ("Q6/Q6", 832)):
+            with self.subTest(pair=pair):
+                self.assertIn(pair, KV_FORMATS)
+                self.assertEqual(kv_cache_bytes(NATIVE_CONTEXT, pair), NATIVE_CONTEXT * 12 * per_cell)
+
     def test_nominal_card_sizes_and_driver_overhead(self):
         for mib, pair in (
             (24576, "FP16/FP16"),

@@ -1,0 +1,289 @@
+{
+  "release": "0.1.41-r2",
+  "date": "2026-10-10",
+  "engine_sha256": "24f4d2cd0a8a52ac1d5506d9232dea239e85c4201675b21ae94e1695b822a716",
+  "platform": "Linux, CUDA 13.1, NVIDIA RTX 5000 Ada laptop GPU",
+  "model": "ISTA Qwen3.8-Flash-Next IQ3_S",
+  "tests": {
+    "python_regressions": 38,
+    "mixed_kv_storage_attention_pairs": 8,
+    "cli_storage_guard_checks": 24
+  },
+  "real_inference": [
+    {
+      "kv": "Q6/Q6",
+      "context_capacity": 262144,
+      "checks": [
+        {
+          "answer": "4<|im_end|>",
+          "timings": {
+            "generated": 2,
+            "prompt_tokens": 25,
+            "prompt_ms": 424.0,
+            "decode_ms": 113.9,
+            "finish": "stop",
+            "drafts_accepted": 3,
+            "drafts_offered": 3,
+            "reused": 0,
+            "hits": 354,
+            "lookups": 2133,
+            "ram_blobs": 0,
+            "file_blobs": 0,
+            "file_mb": 0.0,
+            "prompt_read": 25,
+            "offloaded": 267
+          }
+        },
+        {
+          "answer": "Paris<|im_end|>",
+          "timings": {
+            "generated": 2,
+            "prompt_tokens": 25,
+            "prompt_ms": 385.4,
+            "decode_ms": 112.9,
+            "finish": "stop",
+            "drafts_accepted": 3,
+            "drafts_offered": 3,
+            "reused": 0,
+            "hits": 297,
+            "lookups": 2102,
+            "ram_blobs": 0,
+            "file_blobs": 0,
+            "file_mb": 0.0,
+            "prompt_read": 25,
+            "offloaded": 298
+          }
+        },
+        {
+          "input_tokens": 4419,
+          "answer": "Database indexes are specialized data structures that significantly enhance the speed of data retrieval operations within a database table. Much like the index at the back of a book, they allow the database engine to locate specific records without scanning every row in the table, thereby reducing the time complexity of search queries from linear to logarithmic or constant time. While indexes improve read performance, they come with a trade-off: they consume additional storage space and can slow down write operations (such as INSERT, UPDATE, and DELETE) because the index structure must be updated whenever the underlying data changes. Therefore, effective database design involves strategically creating indexes on columns frequently used in search conditions",
+          "timings": {
+            "generated": 128,
+            "prompt_tokens": 4419,
+            "prompt_ms": 17149.0,
+            "decode_ms": 3118.7,
+            "finish": "length",
+            "drafts_accepted": 75,
+            "drafts_offered": 126,
+            "reused": 0,
+            "hits": 43419,
+            "lookups": 80845,
+            "ram_blobs": 0,
+            "file_blobs": 0,
+            "file_mb": 0.0,
+            "prompt_read": 4419,
+            "offloaded": 5075
+          }
+        }
+      ]
+    },
+    {
+      "kv": "FP16/Q6",
+      "context_capacity": 262144,
+      "checks": [
+        {
+          "answer": "4<|im_end|>",
+          "timings": {
+            "generated": 2,
+            "prompt_tokens": 25,
+            "prompt_ms": 416.0,
+            "decode_ms": 116.4,
+            "finish": "stop",
+            "drafts_accepted": 3,
+            "drafts_offered": 3,
+            "reused": 0,
+            "hits": 250,
+            "lookups": 2129,
+            "ram_blobs": 0,
+            "file_blobs": 0,
+            "file_mb": 0.0,
+            "prompt_read": 25,
+            "offloaded": 271
+          }
+        },
+        {
+          "answer": "Paris<|im_end|>",
+          "timings": {
+            "generated": 2,
+            "prompt_tokens": 25,
+            "prompt_ms": 420.1,
+            "decode_ms": 115.8,
+            "finish": "stop",
+            "drafts_accepted": 3,
+            "drafts_offered": 3,
+            "reused": 0,
+            "hits": 216,
+            "lookups": 2091,
+            "ram_blobs": 0,
+            "file_blobs": 0,
+            "file_mb": 0.0,
+            "prompt_read": 25,
+            "offloaded": 309
+          }
+        },
+        {
+          "input_tokens": 4419,
+          "answer": "Database indexes are specialized data structures that significantly enhance the speed of data retrieval operations on a database table by providing a direct path to specific records, much like an index in a book allows you to find a topic without scanning every page. Instead of performing a full table scan to locate a specific row, the database engine uses the index to quickly navigate to the relevant data based on the indexed column values, thereby reducing the time and computational resources required for queries. While indexes improve read performance, they come with a trade-off: they consume additional storage space and can slow down write operations (such as INSERT, UPDATE, and DELETE) because the index structure",
+          "timings": {
+            "generated": 128,
+            "prompt_tokens": 4419,
+            "prompt_ms": 17860.2,
+            "decode_ms": 2870.1,
+            "finish": "length",
+            "drafts_accepted": 75,
+            "drafts_offered": 101,
+            "reused": 0,
+            "hits": 33578,
+            "lookups": 68991,
+            "ram_blobs": 0,
+            "file_blobs": 0,
+            "file_mb": 0.0,
+            "prompt_read": 4419,
+            "offloaded": 4929
+          }
+        }
+      ]
+    },
+    {
+      "kv": "Q6/Q8",
+      "context_capacity": 262144,
+      "checks": [
+        {
+          "answer": "4<|im_end|>",
+          "timings": {
+            "generated": 2,
+            "prompt_tokens": 25,
+            "prompt_ms": 407.4,
+            "decode_ms": 113.6,
+            "finish": "stop",
+            "drafts_accepted": 3,
+            "drafts_offered": 3,
+            "reused": 0,
+            "hits": 325,
+            "lookups": 2137,
+            "ram_blobs": 0,
+            "file_blobs": 0,
+            "file_mb": 0.0,
+            "prompt_read": 25,
+            "offloaded": 263
+          }
+        },
+        {
+          "answer": "Paris<|im_end|>",
+          "timings": {
+            "generated": 2,
+            "prompt_tokens": 25,
+            "prompt_ms": 392.3,
+            "decode_ms": 112.8,
+            "finish": "stop",
+            "drafts_accepted": 3,
+            "drafts_offered": 3,
+            "reused": 0,
+            "hits": 274,
+            "lookups": 2099,
+            "ram_blobs": 0,
+            "file_blobs": 0,
+            "file_mb": 0.0,
+            "prompt_read": 25,
+            "offloaded": 301
+          }
+        },
+        {
+          "input_tokens": 4419,
+          "answer": "Database indexes are specialized data structures that significantly enhance the speed of data retrieval operations within a database table. Much like the index at the back of a book, they allow the database engine to locate specific records without scanning every row in the table, thereby reducing the time complexity from linear to logarithmic or constant time. By creating an index on one or more columns, the database maintains a sorted or hashed structure that maps values to their physical locations, enabling efficient execution of queries involving filtering, sorting, and joining. While indexes improve read performance, they come with a trade-off: they consume additional storage space and can slow down write operations (such as",
+          "timings": {
+            "generated": 128,
+            "prompt_tokens": 4419,
+            "prompt_ms": 17335.7,
+            "decode_ms": 3235.6,
+            "finish": "length",
+            "drafts_accepted": 71,
+            "drafts_offered": 127,
+            "reused": 0,
+            "hits": 45420,
+            "lookups": 83648,
+            "ram_blobs": 0,
+            "file_blobs": 0,
+            "file_mb": 0.0,
+            "prompt_read": 4419,
+            "offloaded": 5152
+          }
+        }
+      ]
+    },
+    {
+      "kv": "Q8/Q6",
+      "context_capacity": 262144,
+      "checks": [
+        {
+          "answer": "4<|im_end|>",
+          "timings": {
+            "generated": 2,
+            "prompt_tokens": 25,
+            "prompt_ms": 391.0,
+            "decode_ms": 115.1,
+            "finish": "stop",
+            "drafts_accepted": 3,
+            "drafts_offered": 3,
+            "reused": 0,
+            "hits": 325,
+            "lookups": 2131,
+            "ram_blobs": 0,
+            "file_blobs": 0,
+            "file_mb": 0.0,
+            "prompt_read": 25,
+            "offloaded": 269
+          }
+        },
+        {
+          "answer": "Paris<|im_end|>",
+          "timings": {
+            "generated": 2,
+            "prompt_tokens": 25,
+            "prompt_ms": 393.6,
+            "decode_ms": 116.7,
+            "finish": "stop",
+            "drafts_accepted": 3,
+            "drafts_offered": 3,
+            "reused": 0,
+            "hits": 274,
+            "lookups": 2097,
+            "ram_blobs": 0,
+            "file_blobs": 0,
+            "file_mb": 0.0,
+            "prompt_read": 25,
+            "offloaded": 303
+          }
+        },
+        {
+          "input_tokens": 4419,
+          "answer": "Database indexes are specialized data structures that significantly enhance the speed of data retrieval operations within a database table. Much like the index at the back of a book, they allow the database engine to locate specific records without scanning every row in the table, thereby reducing the time complexity from linear to logarithmic or constant time. By creating a sorted or hashed structure based on one or more columns, indexes enable efficient lookups, joins, and sorting operations, which is crucial for maintaining performance in large datasets. However, this speed comes with a trade-off: indexes consume additional storage space and can slow down write operations (such as INSERT, UPDATE, and DELETE",
+          "timings": {
+            "generated": 128,
+            "prompt_tokens": 4419,
+            "prompt_ms": 17375.5,
+            "decode_ms": 3244.7,
+            "finish": "length",
+            "drafts_accepted": 71,
+            "drafts_offered": 126,
+            "reused": 0,
+            "hits": 44276,
+            "lookups": 84034,
+            "ram_blobs": 0,
+            "file_blobs": 0,
+            "file_mb": 0.0,
+            "prompt_read": 4419,
+            "offloaded": 5246
+          }
+        }
+      ]
+    }
+  ],
+  "limits": [
+    "Fully resident GPU KV only; CPU KV streaming, elastic growth and parked conversation snapshots are unsupported for mixed/Q6 formats.",
+    "262144-token capacity allocated; longest tested prompt was 4419 tokens, in 1024-token prefill chunks. Context was not filled to capacity.",
+    "MTP enabled; drafter retains its supported cache layout.",
+    "Functional validation only; no comprehensive quality or speed comparison.",
+    "Windows and AMD execution not verified."
+  ]
+}
