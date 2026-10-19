@@ -102,3 +102,9 @@ Linux execution is tested. Windows launch/build scripts and simulated platform c
 - [Contributing](CONTRIBUTING.md)
 
 Based on **Strata 0.1.41**, with credits to its developers, llama.cpp/ggml, Qwen and the model publishers. [MIT license](LICENSE); model files retain their publishers' licenses. The original [Strata paper](docs/paper/Strata-Paper.pdf) remains available and is separate from this fork's technical note.
+
+## Updated engine reference
+
+The Unleashed picker and install workflow above remain the entry point for this fork.
+For the merged engine's platform, calibration and advanced options, see the
+[pinned upstream engine documentation](https://github.com/Niko1221/Strata/blob/477ac13cbe8e582c20484871ce459d20d82df09d/README.md).

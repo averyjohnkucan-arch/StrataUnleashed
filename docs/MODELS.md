@@ -43,3 +43,9 @@ PLE lookup-table files are mapped from disk rather than permanently resident in 
 Refresh retrieves the publishers' file lists and bounded GGUF headers, pins immutable revisions, and records sizes/hashes. Downloads verify complete-file SHA256 hashes before use. On Windows, replace `./cli-unleashed.sh` with `CLI-UNLEASHED.bat`.
 
 [Full catalog, sources and flags](UNLEASHED-CLI.md) · [Machine-readable catalog](../data/unleashed-models.json)
+
+## Updated engine reference
+
+The Unleashed picker and install workflow above remain the entry point for this fork.
+For the merged engine's platform, calibration and advanced options, see the
+[pinned upstream engine documentation](https://github.com/Niko1221/Strata/blob/477ac13cbe8e582c20484871ce459d20d82df09d/docs/MODELS.md).

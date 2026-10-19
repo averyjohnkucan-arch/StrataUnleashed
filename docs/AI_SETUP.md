@@ -12,3 +12,9 @@ Use the fork's model-selection/download workflow, not the upstream installer's s
 Keep HTTP serving on localhost unless the user asks otherwise. External exposure requires authentication. Do not install or change drivers implicitly. Do not upload credentials, prompts or private model data. User instructions take precedence over these guidelines.
 
 [Every CLI option](UNLEASHED-CLI.md) · [Troubleshooting](TROUBLESHOOTING.md)
+
+## Updated engine reference
+
+The Unleashed picker and install workflow above remain the entry point for this fork.
+For the merged engine's platform, calibration and advanced options, see the
+[pinned upstream engine documentation](https://github.com/Niko1221/Strata/blob/477ac13cbe8e582c20484871ce459d20d82df09d/docs/AI_SETUP.md).

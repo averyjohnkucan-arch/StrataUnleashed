@@ -90,3 +90,9 @@ The model weights, local configuration, caches and credentials are excluded from
 Full-context tuning processes a near-262K prompt for each prefill candidate and can take a long time. Progress reports elapsed time and GPU memory every 30 seconds during generation. Keep the terminal open; subsequent starts reuse a matching validated profile.
 
 For an existing Git checkout, use `git pull --ff-only` on the `unleashed` branch, then rerun the CLI. The one-command installer reuses an existing installation; it does not overwrite it as an updater. A release archive can instead be extracted into a fresh directory. Changes to native-context policy invalidate old tuning profiles.
+
+## Updated engine reference
+
+The Unleashed picker and install workflow above remain the entry point for this fork.
+For the merged engine's platform, calibration and advanced options, see the
+[pinned upstream engine documentation](https://github.com/Niko1221/Strata/blob/477ac13cbe8e582c20484871ce459d20d82df09d/docs/INSTALL.md).

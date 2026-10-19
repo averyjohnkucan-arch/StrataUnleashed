@@ -22,6 +22,15 @@ Windows is distributed as source/build scripts. Native Windows execution has not
 
 The bundled engine targets Ada/sm89 and a recent Linux runtime. Rebuild with `./BUILD-UNLEASHED.sh` after installing the compiler/CUDA prerequisites, or use `--build`. The wizard checks whether the existing binary can execute before treating it as ready.
 
+**Linux: the engine does not compile (`unsupported GNU version`, or `exception specification is incompatible` for
+`cospi`/`sinpi`/`rsqrt`).** Two known mismatches between the CUDA toolkit and a new Linux (#601):
+- gcc newer than 14 (Ubuntu 26.04's default 15): CUDA 12.x and 13.0 refuse it. Install g++-14 and run
+  `CXX=g++-14 ./setup.sh` (CC, CXX and CUDAHOSTCXX name the build's compilers; setup passes them to CMake itself,
+  so an already-configured build folder picks them up too, #1645).
+- glibc 2.43 with CUDA 12.9: the toolkit's math headers clash with glibc's, already in CMake's first test compile.
+  Use CUDA 12.8 or 13.x instead. Setup takes the newest toolkit it finds; `STRATA_NVCC=/usr/local/cuda-12.8/bin/nvcc
+  ./setup.sh` makes it use that one (only that one).
+
 ## Download interrupted, checksum failed, or a shard is missing
 
 Choose the same model again to resume `.part` files. A checksum mismatch never becomes a completed model file. Corrupt partials get `.bad-*` names; remove them manually if you need the disk space. An invalid already completed file is left untouched; move it aside and retry.
