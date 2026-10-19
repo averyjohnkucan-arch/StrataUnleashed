@@ -604,10 +604,14 @@ private:
     int32_t *ids_ = nullptr, *hit_slot_ = nullptr, *hit_dst_ = nullptr, *hit_count_ = nullptr;
     int32_t* plan_ = nullptr;                                     // device copy of the plan block
     uint8_t* staging_ = nullptr;                                  // VRAM slots for the PCIe share of the misses
-    static constexpr int64_t kStagingBlobs = 16;
+    int64_t staging_blobs_ = 16; // opt-in bounded PCIe staging; default unchanged
     static constexpr int64_t kPcieGroupRows = 4;                  // the PCIe call's groups side by side (of <= 16)
     uint8_t* hit_xq_ = nullptr;
     uint8_t* nat_xq_ = nullptr;   // plan v0.3 P6: q8_1 activations for a native pack's grouped experts
+    float* nat_xr_ = nullptr;     // APR: the Hadamard-rotated expert input (the shared expert and the CPU keep xm); nullptr
+                                  // unless some layer's gate/up is folded
+    const float* had_sx_ = nullptr;   // APR: device sign vectors for x (n_embd) and h (n_ff); nullptr = identity
+    const float* had_sh_ = nullptr;
     float* hit_xs_ = nullptr;
     void* hit_scratch_ = nullptr;
     float *head_mixed_ = nullptr, *head_inj_ = nullptr, *head_logits_ = nullptr;

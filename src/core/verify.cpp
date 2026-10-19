@@ -2,8 +2,10 @@
 // src/core/verify.cpp - see include/strata/core/verify.hpp.
 #include "strata/core/batch_rows.hpp"
 #include "strata/core/sm75_series.hpp"
+#include "strata/core/sm120_series.hpp"
 #include "strata/kernels/gfx_arch.hpp"
 #include "strata/core/verify.hpp"
+#include "strata/core/pin_budget.hpp"
 #if !defined(STRATA_USE_HIP) && !defined(STRATA_HIP_GFX906)
 #include "strata/core/host_graph_launch.hpp"
 #endif
@@ -23,6 +25,7 @@
 #include "strata/core/peer_experts.hpp"
 #include "strata/kernels/iq_kernels.hpp"
 #include "strata/kernels/cpu/expert_layout.hpp"
+#include "strata/kernels/cpu/hadamard.hpp"
 #include "strata/kernels/bf16_gemv.hpp"
 #include "strata/kernels/native_router.hpp"
 #include "strata/kernels/native_moe.hpp"
@@ -177,9 +180,28 @@ inline bool g_qfuse_hc() {
     return false;
 #endif
 }
-// fork 34a35db + b063c13 (Eddoursul), STRATA_SIDE_MIXER=1 / =2 (opt-in): the mixer's work that reads only the layer's
-// input on branches of the window's graph (bitwise the same outputs); 0 / unset = in line, and no branch stream is created
-inline int g_side_mixer() { static const int m = [] { const char* v = std::getenv("STRATA_SIDE_MIXER"); return v ? std::max(0, std::min(2, std::atoi(v))) : 0; }(); return m; }
+// fork 34a35db + b063c13 (Eddoursul), STRATA_SIDE_MIXER=1 / =2: the mixer's work that reads only the layer's input on
+// branches of the window's graph (bitwise the same outputs); 0 = in line, and no branch stream is created.  Unset: 2 on a
+// compute capability 12.0 card (sm120_series.hpp; STRATA_SM120_PERF=0 turns it off), 0 elsewhere.
+inline int g_side_mixer() {
+    static const int env = [] { const char* v = std::getenv("STRATA_SIDE_MIXER"); return v ? std::max(0, std::min(2, std::atoi(v))) : -1; }();
+    if (env >= 0) return env;
+#if defined(STRATA_USE_HIP) || defined(STRATA_GPU_METAL)
+    return 0;
+#else
+    static int per_dev[64];   // 0 unknown, else mode + 1
+    int dev = 0;
+    if (cudaGetDevice(&dev) != cudaSuccess || dev < 0 || dev >= 64) { cudaGetLastError(); return 0; }
+    if (!per_dev[dev]) {
+        int maj = 0, mnr = 0;
+        const bool ok = cudaDeviceGetAttribute(&maj, cudaDevAttrComputeCapabilityMajor, dev) == cudaSuccess &&
+                        cudaDeviceGetAttribute(&mnr, cudaDevAttrComputeCapabilityMinor, dev) == cudaSuccess;
+        if (!ok) cudaGetLastError();
+        per_dev[dev] = 1 + (ok && strata::sm120_default(maj, mnr) ? 2 : 0);
+    }
+    return per_dev[dev] - 1;
+#endif
+}
 inline bool g_qfuse() { static const bool on = [] { const char* v = std::getenv("STRATA_QFUSE"); return v != nullptr && std::atoi(v) != 0; }(); return on; }
 #define VDBG(...) do { if (g_dbg) { std::fprintf(stderr, "verify dbg: " __VA_ARGS__); std::fflush(stderr); } } while (0)
 
@@ -380,7 +402,7 @@ bool mapped(size_t bytes, void** h, void** d) {
         return cudaHostGetDevicePointer(d, *h, 0) == cudaSuccess;
     }
 #endif
-    if (cudaHostAlloc(h, bytes, cudaHostAllocMapped | (peer_portable() ? cudaHostAllocPortable : 0)) != cudaSuccess) return false;   // multi-GPU: portable only with a peer - the peer card writes its rows into them
+    if (strata::core::host_alloc_guarded(h, bytes, cudaHostAllocMapped | (peer_portable() ? cudaHostAllocPortable : 0)) != cudaSuccess) return false;   // multi-GPU: portable only with a peer - the peer card writes its rows into them
     std::memset(*h, 0, bytes);
     return cudaHostGetDevicePointer(d, *h, 0) == cudaSuccess;
 }
@@ -634,6 +656,16 @@ bool Verifier::set_logit_bias(const std::vector<float>& bias, std::string& err) 
 
 bool Verifier::init(const WeightTable& wt, const ModelGeometry& g, SessionState& ss, const VerifyHits& hits,
                     const NativeHead* head, int max_t, std::string& err) {
+    staging_blobs_ = 16;
+    if (const char* value = std::getenv("STRATA_PCIE_STAGING_BLOBS")) {
+        char* end = nullptr;
+        const long capacity = std::strtol(value, &end, 10);
+        if (!*value || *end || capacity < 2 || capacity > 64 || capacity % 2) {
+            err = "STRATA_PCIE_STAGING_BLOBS must be an even integer in [2,64]";
+            return false;
+        }
+        staging_blobs_ = capacity;
+    }
     g_diag_verifier.store(this);
     diag_verify_fn().store(&diag_active_verifier);
     for (auto& slot : g_live) {
@@ -721,7 +753,7 @@ bool Verifier::init(const WeightTable& wt, const ModelGeometry& g, SessionState&
               mapped(64, (void**) &h_flagB_, (void**) &m_flagB_) &&
               mapped(64, (void**) &h_plan_err_, (void**) &m_plan_err_) &&
               mapped(T * K * N * 4, (void**) &h_ymiss_, (void**) &m_ymiss_);
-    if (!ok) { err = "verify: mapped staging allocation failed"; return false; }
+    if (!ok) { err = "verify: mapped staging allocation failed " + strata::core::pin_exhausted_hint(); return false; }
     if (bal_ != nullptr) {   // set_pcie_balance: four stamp words per (layer, group)
         if (!mapped((size_t) g.n_layers * 2 * 4 * 8, (void**) &h_bal_, (void**) &m_bal_)) {
             err = "verify: mapped balance stamps allocation failed";
@@ -740,7 +772,7 @@ bool Verifier::init(const WeightTable& wt, const ModelGeometry& g, SessionState&
         const int64_t ptr_off = (i32 + 1) & ~1ll;
         plan_i32_ = ptr_off + 4 * cap + (cap + 1) + 1;
         if (!mapped((size_t) plan_i32_ * 4 * 2 + 64, (void**) &h_plan_, (void**) &m_plan_)) {
-            err = "verify: mapped plan allocation failed";
+            err = "verify: mapped plan allocation failed " + strata::core::pin_exhausted_hint();
             return false;
         }
         sink_.counts = h_plan_;
@@ -756,6 +788,13 @@ bool Verifier::init(const WeightTable& wt, const ModelGeometry& g, SessionState&
         sink_.ctx = this;
     }
 
+    // APR: the rotated copy of the expert input (nat_xr_, T x N floats) only where a layer's gate/up is
+    // Hadamard-folded; its one reader is that layer's f.had_gu branch in the expert-input step below
+    bool had_gu_any = false;
+    {
+        const auto& lay = strata::kernels::cpu::expert_layout();
+        for (size_t l = 0; lay.native && l < lay.fmt.size(); ++l) had_gu_any = had_gu_any || lay.fmt[l].had_gu;
+    }
     // ---- the device arena: the same sequence counted, then carved
     auto carve = [&](Bump& b) {
         tok_ = b.take<int32_t>(T); step_ = b.take<int32_t>(T * strata::kernels::kStepCount);
@@ -766,7 +805,7 @@ bool Verifier::init(const WeightTable& wt, const ModelGeometry& g, SessionState&
         lo_ = b.take<float>(T * (uint64_t) g.hc_lr); rs_ = b.take<float>(T * HC); xn_ = b.take<float>(T * HC * N);
         xq_ = b.take<uint8_t>(strata::kernels::native_q8_1_bytes(max_in, (int) T));
         sh_xq_ = b.take<uint8_t>(strata::kernels::native_q8_1_bytes(max_in, (int) T));
-        xil_ = b.take<uint8_t>(strata::kernels::native_q8_1_il_bytes(max_in, 4));
+        xil_ = b.take<uint8_t>(strata::kernels::native_q8_1_il_bytes(max_in, std::max(4, (int) T)));   // 147-verify: 5-8 columns too
         qkv_L_ = b.take<float>(nG * T * C); h_L_ = b.take<float>(nG * T * C);
         gate_L_ = b.take<float>(nG * T * HV); beta_L_ = b.take<float>(nG * T * HV);
         z_ = b.take<float>(T * ZV); y_ = b.take<float>(T * ZV); y_dummy_ = b.take<float>(T * ZV);
@@ -781,9 +820,10 @@ bool Verifier::init(const WeightTable& wt, const ModelGeometry& g, SessionState&
         shared_ = b.take<float>(T * N); parts_ = b.take<float>(T * K * N); hit_out_ = b.take<float>(T * K * N);
         hit_slot_ = b.take<int32_t>(T * K); hit_dst_ = b.take<int32_t>(T * K); hit_count_ = b.take<int32_t>(4);
         plan_ = b.take<int32_t>(2 * ((uint64_t) plan_i32_ + 16));
-        staging_ = b.take<uint8_t>((uint64_t) kStagingBlobs * strata::kernels::cpu::expert_layout().max_blob);
+        staging_ = b.take<uint8_t>((uint64_t) staging_blobs_ * strata::kernels::cpu::expert_layout().max_blob);
         hit_xq_ = b.take<uint8_t>(T * (N / 32) * 34); hit_xs_ = b.take<float>(T * (N / 32));
         nat_xq_ = b.take<uint8_t>(T * (N / 32) * 36);
+        nat_xr_ = had_gu_any ? b.take<float>(T * N) : nullptr;
         hit_scratch_ = b.take<uint8_t>(std::max<uint64_t>(
             strata::kernels::moe_hit_grouped_scratch_bytes((int64_t) (T * K), g.n_embd, g.n_ff),
             strata::kernels::native_expert_scratch_bytes((int64_t) (T * K), g.n_ff)));
@@ -843,8 +883,12 @@ bool Verifier::init(const WeightTable& wt, const ModelGeometry& g, SessionState&
             return false;
         }
     }
+    {   // APR (prism.hadamard, hadamard.txt): the sign vectors on this device, before any graph capture
+        had_sx_ = strata::kernels::hadamard_device_signs(strata::kernels::cpu::hadamard_signs((int) g.n_embd), (int) g.n_embd);
+        had_sh_ = strata::kernels::hadamard_device_signs(strata::kernels::cpu::hadamard_signs((int) g.n_ff), (int) g.n_ff);
+    }
     sink_.staging = (unsigned long long) staging_;
-    sink_.staging_cap = kStagingBlobs;
+    sink_.staging_cap = staging_blobs_;
     (void) TS;
     // STRATA_PIPED_CONCURRENT=1 (opt-in): a prompt can run on the same GPU while the batch windows run, so the windows'
     // streams get the device's highest priority (HIP: the default priority, as the drafter's)
@@ -1929,8 +1973,17 @@ bool Verifier::record_window(int T, cudaStream_t cs, std::string& err) {
             if (sh_fork) cudaEventRecord(ev_join_, sh_cs_);
         }
         if (strata::kernels::cpu::expert_layout().native) {
-            if (!qdedup)
-                if (!q8_ffn) quantize_q8_1_rows(xm, n, N, nat_xq_ + (size_t) tb * (N / 32) * 36, cs);
+            // APR: Hadamard-folded gate/up take H (s * x); xm itself stays as it is (the shared expert above and the
+            // doorbell copy for the CPU pool, which rotates its own in native_quant_act). The q8_1 image of xm that
+            // STRATA_QFUSE / STRATA_VERIFY_QDEDUP may already have written is of the unrotated input, so a folded layer
+            // always rewrites it from the rotated rows (same stream, after the shared expert has read it).
+            const auto& f = strata::kernels::cpu::expert_layout().fmt[(size_t) l];
+            if (f.had_gu) {   // nat_xr_ exists: init carved it because this layer is folded (had_gu_any)
+                hadamard_rows(xm, nat_xr_ + (size_t) tb * N, n, N, f.had_block, had_sx_, cs);
+                quantize_q8_1_rows(nat_xr_ + (size_t) tb * N, n, N, nat_xq_ + (size_t) tb * (N / 32) * 36, cs);
+            } else if (!qdedup && !q8_ffn) {
+                quantize_q8_1_rows(xm, n, N, nat_xq_ + (size_t) tb * (N / 32) * 36, cs);
+            }
         } else
             quantize_q8_0_scaled(xm, hit_xq_ + (size_t) tb * (N / 32) * 34, hit_xs_ + (size_t) tb * (N / 32), (int64_t) n * N, cs);
         stamp(l, 18, grp);
@@ -1966,7 +2019,8 @@ bool Verifier::record_window(int T, cudaStream_t cs, std::string& err) {
             if (lay.native) {
                 // the layer's GGUF formats (i-quant gate/up, Q2_0 / IQ4_NL down)
                 const auto& f = lay.fmt[(size_t) l];
-                const NativeExpertLayout L = native_expert_layout(f.gu_type, f.d_type, f.n_embd, f.n_ff);
+                NativeExpertLayout L = native_expert_layout(f.gu_type, f.d_type, f.n_embd, f.n_ff);
+                if (f.had_d) { L.had_block = f.had_block; L.d_signs = had_sh_; }   // APR: h is rotated in there
                 native_expert_grouped(L, gp, gs, gn, p_dst, p_tok, cap, cap,
                                       nat_xq_ + (size_t) tb * (N / 32) * 36, hit_scratch_, dst_buf, cs, gy);
             } else {
@@ -2002,7 +2056,7 @@ bool Verifier::record_window(int T, cudaStream_t cs, std::string& err) {
                 wait_flag_ge_stamped(m_flagB_, ring, m_bal_ + ((l - lb_) * 2 + grp) * 4 + 1, nullptr, cs);
             else wait_flag_ge(m_flagB_, ring, cs);                 // the PCIe share is in staging (DMA) or mapped
             if (sink_.pcie_mode == 2) {                            // stage it with a copy kernel, then point at staging
-                const int64_t per = G == 2 ? kStagingBlobs / 2 : kStagingBlobs;
+                const int64_t per = G == 2 ? staging_blobs_ / 2 : staging_blobs_;
                 uint8_t* stage = staging_ + (size_t) (grp * per) * lay.max_blob;
                 fetch_blobs(p_ptr2, p_counts + 2, stage, (int64_t) lay.blob_bytes(l), (int) per, cs);
                 rebase_ptrs((unsigned long long*) p_ptr2, p_counts + 2, stage, (int64_t) lay.blob_bytes(l), cs);
@@ -2186,7 +2240,7 @@ bool Verifier::record_window(int T, cudaStream_t cs, std::string& err) {
         // Greedy, the default, is recorded here as before (no extra launch or sync per window). A request that
         // samples or penalizes is sampled again host-side after the replay (run()) with its own parameters and a
         // fresh draw counter: a captured sampler would bake them in and replay the same draws forever.
-        if (argmax_rows_wanted()) {   // sm_80 to sm_89: the pick over many blocks a row (bitwise the one-block kernel's)
+        if (argmax_rows_wanted()) {   // sm_80 to sm_89 (sm_7x opt-in): the pick over many blocks a row (bitwise the one-block kernel's)
             argmax_rows(head_logits_, T, (int) n_vocab_, arg_scratch_, m_out_, cs);
         } else {
             SamplerParams sp;
@@ -3014,7 +3068,7 @@ void Verifier::set_plan_slot(int grp) {
     sink_.ptr2 = sink_.ptr + cap;
     sink_.start2 = base + ptr_off + 4 * cap;
     const int G = last_batch_ ? 1 : (groups_[last_t_] > 0 ? groups_[last_t_] : 1);
-    const int64_t per = G == 2 ? kStagingBlobs / 2 : kStagingBlobs;
+    const int64_t per = G == 2 ? staging_blobs_ / 2 : staging_blobs_;
     sink_.staging = (unsigned long long) (staging_ + (size_t) (grp * per) * strata::kernels::cpu::expert_layout().max_blob);
     sink_.staging_cap = per;
 }
