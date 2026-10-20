@@ -37,6 +37,21 @@ class TemplateRequestError(jinja2.exceptions.TemplateError, ValueError):
     client gets a 400 with the template's message instead of a dropped connection (#365)."""
 
 
+def _is_empty_assistant_turn(message) -> bool:
+    """Identify completed assistant turns with no text, image or tool call.
+
+    Reasoning alone does not make a useful example of an assistant reply.
+    User and tool messages keep their place even when their content is empty.
+    """
+    if not isinstance(message, dict) or message.get("role") != "assistant":
+        return False
+    return (
+        not _text_of(message.get("content")).strip()
+        and not _has_image(message.get("content"))
+        and not message.get("tool_calls")
+    )
+
+
 class ChatTemplate:
     """The model's chat template, rendered with the same Jinja settings as transformers' apply_chat_template."""
 
@@ -56,12 +71,15 @@ class ChatTemplate:
 
     def render(self, messages: list[dict], tools: list[dict] | None = None, add_generation_prompt: bool = True,
                **kwargs) -> str:
-        # Do not use completed empty assistant turns as examples for the next reply. Keep the final message.
-        # (#843.  STRATA_KEEP_EMPTY_TURNS=1 renders them as before.)
-        messages = [m for i, m in enumerate(messages)
-                    if i == len(messages) - 1 or os.environ.get("STRATA_KEEP_EMPTY_TURNS") == "1" or not (isinstance(m, dict) and m.get("role") == "assistant"
-                                                      and not _text_of(m.get("content")).strip()
-                                                      and not _has_image(m.get("content")) and not m.get("tool_calls"))]
+        # The final turn may be an unfinished assistant prefix, so keep it.
+        # The compatibility override restores completed empty turns too (#843).
+        messages = [
+            message
+            for index, message in enumerate(messages)
+            if index == len(messages) - 1
+            or os.environ.get("STRATA_KEEP_EMPTY_TURNS") == "1"
+            or not _is_empty_assistant_turn(message)
+        ]
         return self.template.render(messages=messages, tools=tools, add_generation_prompt=add_generation_prompt,
                                     **kwargs)
 

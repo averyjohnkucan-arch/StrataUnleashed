@@ -716,18 +716,25 @@ __device__ __forceinline__ float vec_dot_tq_q8_1(const void* __restrict__ vbq, c
 }
 
 // Pair-trellis (vendor TQP5/6/7): reuse the existing int8 codebook and dp4a apply.
-template<int TY> struct TqpInfo { static constexpr int K=TY-142; using block_t=strata::tqp::Block<K>; };
-template<int TY> __device__ __forceinline__ TqLane tqp_load(const void* v,int block,int iqs) {
-    const auto* b=(const typename TqpInfo<TY>::block_t*)v+block;
-    const int lane=iqs/4;
+// GGML types 147/148/149 encode 5/6/7 bits per pair-stream step.
+template <int TY> struct TqpInfo {
+    static constexpr int K = TY - 142;
+    using block_t = strata::tqp::Block<K>;
+};
+template <int TY> __device__ __forceinline__ TqLane tqp_load(const void* v, int block, int iqs) {
+    const auto* b = (const typename TqpInfo<TY>::block_t*) v + block;
+    const int lane = iqs / 4;
     TqLane result;
+    // One lane loads 16 weights: four packed int32 words, each holding two
+    // codebook pairs. This matches tq_apply's four dp4a operations exactly.
 #pragma unroll
-    for(int j=0;j<4;++j) {
-        const uint32_t a=(strata::tqp::state<TqpInfo<TY>::K>(b->qs,8*lane+2*j)*0x9e3779b1u)>>21;
-        const uint32_t c=(strata::tqp::state<TqpInfo<TY>::K>(b->qs,8*lane+2*j+1)*0x9e3779b1u)>>21;
-        result.q[j]=int(uint32_t(tq_lut_i8[a]) | (uint32_t(tq_lut_i8[c])<<16));
+    for (int j = 0; j < 4; ++j) {
+        const uint32_t a = (strata::tqp::state<TqpInfo<TY>::K>(b->qs, 8 * lane + 2 * j) * 0x9e3779b1u) >> 21;
+        const uint32_t c = (strata::tqp::state<TqpInfo<TY>::K>(b->qs, 8 * lane + 2 * j + 1) * 0x9e3779b1u) >> 21;
+        result.q[j] = int(uint32_t(tq_lut_i8[a]) | (uint32_t(tq_lut_i8[c]) << 16));
     }
-    result.d=tq_h2f(b->d); return result;
+    result.d = tq_h2f(b->d);
+    return result;
 }
 // ---------------------------------------------------------------- the formats
 // qk = values per block, ipb = dot calls per block (qi / vdr), step = the iqs stride between calls.
@@ -773,13 +780,24 @@ template<> struct Fmt<39> { static constexpr int qk = 32, ipb = 2, step = 2;
 template<> struct Fmt<40> { static constexpr int qk = 64, ipb = 2, step = 4;     // NVFP4: 2 calls of 32 values
     __device__ static float dot(const void* v, const block_q8_1* y, int kbx, int iqs) { return vec_dot_nvfp4_q8_1(v, y, kbx, iqs); } };
 
-
-template<> struct Fmt<147> { static constexpr int qk=128, ipb=8, step=4;
-    __device__ static float dot(const void* v,const block_q8_1* y,int b,int i) { return tq_apply(tqp_load<147>(v,b,i),y,i); } };
-template<> struct Fmt<148> { static constexpr int qk=128, ipb=8, step=4;
-    __device__ static float dot(const void* v,const block_q8_1* y,int b,int i) { return tq_apply(tqp_load<148>(v,b,i),y,i); } };
-template<> struct Fmt<149> { static constexpr int qk=128, ipb=8, step=4;
-    __device__ static float dot(const void* v,const block_q8_1* y,int b,int i) { return tq_apply(tqp_load<149>(v,b,i),y,i); } };
+template <> struct Fmt<147> {
+    static constexpr int qk = 128, ipb = 8, step = 4;
+    __device__ static float dot(const void* v, const block_q8_1* y, int b, int i) {
+        return tq_apply(tqp_load<147>(v, b, i), y, i);
+    }
+};
+template <> struct Fmt<148> {
+    static constexpr int qk = 128, ipb = 8, step = 4;
+    __device__ static float dot(const void* v, const block_q8_1* y, int b, int i) {
+        return tq_apply(tqp_load<148>(v, b, i), y, i);
+    }
+};
+template <> struct Fmt<149> {
+    static constexpr int qk = 128, ipb = 8, step = 4;
+    __device__ static float dot(const void* v, const block_q8_1* y, int b, int i) {
+        return tq_apply(tqp_load<149>(v, b, i), y, i);
+    }
+};
 template<> struct Fmt<8> { static constexpr int qk = 32, ipb = QI8_0 / VDR_Q8_0, step = VDR_Q8_0;
     __device__ static float dot(const void* v, const block_q8_1* y, int kbx, int iqs) { return vec_dot_q8_0_q8_1(v, y, kbx, iqs); } };
 // APR trellis types: 8 lanes of 4 steps per 128-value block, iqs = 4 * lane
@@ -1421,19 +1439,41 @@ template<int TY> struct SplitTq {
 template<> struct Split<144> : SplitTq<144> {};
 template<> struct Split<145> : SplitTq<145> {};
 template<> struct Split<146> : SplitTq<146> {};
-template<> inline constexpr bool kSplit<147> = true;
-template<> struct Split<147> { using W=TqLane;
- template<bool STAGE_GRID=false> __device__ static W load(const void* v,int b,int i,const uint32_t* = nullptr) { return tqp_load<147>(v,b,i); }
- __device__ static float apply(const W& r,const block_q8_1* y,int i) { return tq_apply(r,y,i); } };
-template<> inline constexpr bool kSplit<148> = true;
-template<> struct Split<148> { using W=TqLane;
- template<bool STAGE_GRID=false> __device__ static W load(const void* v,int b,int i,const uint32_t* = nullptr) { return tqp_load<148>(v,b,i); }
- __device__ static float apply(const W& r,const block_q8_1* y,int i) { return tq_apply(r,y,i); } };
-template<> inline constexpr bool kSplit<149> = true;
-template<> struct Split<149> { using W=TqLane;
- template<bool STAGE_GRID=false> __device__ static W load(const void* v,int b,int i,const uint32_t* = nullptr) { return tqp_load<149>(v,b,i); }
- __device__ static float apply(const W& r,const block_q8_1* y,int i) { return tq_apply(r,y,i); } };
-
+// Split loading lets a multi-activation dot reuse decoded weights. TQP has no
+// per-block grid to stage; each specialization reads the shared codebook.
+template <> inline constexpr bool kSplit<147> = true;
+template <> struct Split<147> {
+    using W = TqLane;
+    template <bool STAGE_GRID = false>
+    __device__ static W load(const void* v, int b, int i, const uint32_t* = nullptr) {
+        return tqp_load<147>(v, b, i);
+    }
+    __device__ static float apply(const W& r, const block_q8_1* y, int i) {
+        return tq_apply(r, y, i);
+    }
+};
+template <> inline constexpr bool kSplit<148> = true;
+template <> struct Split<148> {
+    using W = TqLane;
+    template <bool STAGE_GRID = false>
+    __device__ static W load(const void* v, int b, int i, const uint32_t* = nullptr) {
+        return tqp_load<148>(v, b, i);
+    }
+    __device__ static float apply(const W& r, const block_q8_1* y, int i) {
+        return tq_apply(r, y, i);
+    }
+};
+template <> inline constexpr bool kSplit<149> = true;
+template <> struct Split<149> {
+    using W = TqLane;
+    template <bool STAGE_GRID = false>
+    __device__ static W load(const void* v, int b, int i, const uint32_t* = nullptr) {
+        return tqp_load<149>(v, b, i);
+    }
+    __device__ static float apply(const W& r, const block_q8_1* y, int i) {
+        return tq_apply(r, y, i);
+    }
+};
 
 // One row against the n <= NC activations x + off[0..n) (n >= 1, warp-uniform; offsets in q8_1 blocks, 32-bit to
 // spare registers), the whole warp.  Per activation this is row_dot: the same calls k, lane-strided the same way,
@@ -3030,17 +3070,21 @@ __device__ void dq_tq(const void* vx, int64_t ibs, dst_t* yy, int tid) {
     }
 }
 
-template<int TY, typename dst_t>
-__device__ void dq_tqp(const void* vx,int64_t ibs,dst_t* yy,int tid) {
- const int block=tid>>4, lane=(tid>>1)&7, half=tid&1;
- const auto* b=(const typename TqpInfo<TY>::block_t*)vx+2*ibs+block;
- const float d=tq_h2f(b->d); dst_t* y=yy+128*block+16*lane+8*half;
+template <int TY, typename dst_t> __device__ void dq_tqp(const void* vx, int64_t ibs, dst_t* yy, int tid) {
+    // A dispatch covers two 128-weight blocks. Sixteen threads per block each
+    // decode four pairs (eight values), retaining FP16 codebook precision here.
+    // The int8 approximation used for dot products belongs only in tqp_load.
+    const int block = tid >> 4, lane = (tid >> 1) & 7, half = tid & 1;
+    const auto* b = (const typename TqpInfo<TY>::block_t*) vx + 2 * ibs + block;
+    const float d = tq_h2f(b->d);
+    dst_t* y = yy + 128 * block + 16 * lane + 8 * half;
 #pragma unroll
- for(int j=0;j<4;++j) {
-  const uint32_t state=strata::tqp::state<TqpInfo<TY>::K>(b->qs,8*lane+4*half+j);
-  const uint32_t bits=((const uint32_t*)tq_lut_f16)[(state*0x9e3779b1u)>>21];
-  y[2*j]=cvt<dst_t>(d*tq_h2f(bits&65535u));y[2*j+1]=cvt<dst_t>(d*tq_h2f(bits>>16));
- }
+    for (int j = 0; j < 4; ++j) {
+        const uint32_t state = strata::tqp::state<TqpInfo<TY>::K>(b->qs, 8 * lane + 4 * half + j);
+        const uint32_t bits = ((const uint32_t*) tq_lut_f16)[(state * 0x9e3779b1u) >> 21];
+        y[2 * j] = cvt<dst_t>(d * tq_h2f(bits & 65535u));
+        y[2 * j + 1] = cvt<dst_t>(d * tq_h2f(bits >> 16));
+    }
 }
 
 // Every type below must also be in is_iq() (BF16: embed_type_supported): the host entry points refuse the others,

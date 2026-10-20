@@ -1,20 +1,28 @@
-#include "strata/core/logit_bias.hpp"
-// src/program/generate.cpp - P2.S6: `strata generate`.
+// src/program/generate.cpp - the native generation driver and --serve protocol.
 //
-// THE DRIVER, and the first program in this project that answers a question.  Everything below it is a
-// component; this is the thing that composes them into a token:
+// Start with Options and usage() for configuration, then main() for startup and
+// request handling. This file coordinates resources and execution; the numerical
+// implementations live in the components it calls:
 //
-//     embed_row(token)  ->  48 captured layer graphs (the CPU expert pool behind the doorbell)  ->
-//     lm_head(R)        ->  sample        ->  embed_row(next)  ->  ...
+//   artifact/gguf_reader   Model metadata, shard validation and tensor locations.
+//   core/weights, layout   Loaded tensors and model geometry.
+//   core/expert_source    Expert storage, host tiers and cache movement.
+//   core/layer, session   Layer execution, captured graphs and token state.
+//   prefill/              Prompt processing and batched expert work.
+//   core/mtp, verify      Speculative drafting, verification and commit.
+//   core/conversation_*   Conversation checkpoints and persistence.
+//   kernels/              Backend-specific arithmetic; CPU fallback in cpu/.
 //
-// WHAT IT IS NOT.  There is no tokenizer here.  `pack/full/tokenizer/` and `tools/strata_tokenizer.py` exist,
-// and a C++ BPE is Phase 1's deliverable rather than this program's, so the prompt arrives as IDS via
-// `--tokens`.  That is not a placeholder: it is exactly what Gate C1 needs, because C1 compares logits against
-// llama.cpp on the SAME ids, and a tokenizer on only one side of that comparison is a second variable.
+// The Python API adapter in serve/server.py owns text tokenization and sends
+// token IDs to this process. Within the engine the decode cycle is:
 //
-// AND IT IS PHASE 2, so hit rate is `h = 0` and the number it prints is slow on purpose
-// (`phase-2-correct-engine.md:5-9`).  What it is FOR is the honest tok/s figure and the logit dump.
+//   embed token -> execute layers -> LM head -> sample -> embed next token
+//
+// Resource ordering matters: graph replays borrow buffers, multi-GPU stages own
+// device-local state, and checkpoints must represent committed tokens. Keep
+// their lifetimes explicit when extracting more orchestration from this file.
 
+#include "strata/core/logit_bias.hpp"
 #include "strata/platform/memory.hpp"
 #include "strata/core/arch_defaults.hpp"
 #include "strata/core/nv_defaults.hpp"

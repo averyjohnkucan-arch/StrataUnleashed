@@ -4,7 +4,8 @@
     python -m serve.server --engine strata --config strata.json --port 8080   (the real engine, resident)
 
 Endpoints: POST /v1/chat/completions (OpenAI, stream and non-stream), POST /v1/messages (Anthropic, stream and
-non-stream), GET /v1/models, GET /models, GET /props, GET /slots, GET /health, GET /mcp. One sequence at a time behind a FIFO (plan: one resident sequence).
+non-stream), GET /v1/models, GET /models, GET /props, GET /slots, GET /health, GET /mcp.
+Service coordinates request admission and the engine's available slots.
 Image generation (optional, when the config has an "images" section): POST /v1/images/generations (OpenAI's shape,
 plus seed and steps) runs stable-diffusion.cpp's sd-cli for Qwen-Image-2.1-Turbo, one job at a time on the GPU the
 text engine uses (serve/images.py).
@@ -23,6 +24,16 @@ An unset (or 0, or -1) max tokens means "unlimited": whatever the prompt leaves 
 The engine boundary is `Engine.generate(prompt_ids, max_new, sampling, cancel) -> iterator of token ids`.
 `StrataEngine` keeps one `strata --serve` process resident (weights, expert arena and VRAM tier load once) and
 talks to it over stdin/stdout; `MockEngine` is a scripted stand-in that makes every API path testable without a GPU.
+
+Reading guide:
+  * Engine / MockEngine define the engine interface and its test substitute.
+  * StrataEngine owns the subprocess, admission, restart and generation protocol.
+  * Vision adapts image inputs to engine embeddings.
+  * The HTTP handler translates requests and streams responses to clients.
+
+Keep text/template parsing in serve.frontend, configuration in serve.runconfig,
+and process ownership/recovery helpers in their existing serve modules. Those
+boundaries let lifecycle and API tests run without loading model weights.
 """
 from __future__ import annotations
 

@@ -92,7 +92,9 @@ const int16_t* tq_state_table() {
 
 bool tq_supported(int t) noexcept { return t >= 144 && t <= 149; }
 
-int tq_kbits(int t) noexcept { return t == 144 ? 8 : t == 145 ? 6 : t == 146 ? 7 : t >= 147 && t <= 149 ? -(t-142) : 0; }
+int tq_kbits(int t) noexcept {
+    return t == 144 ? 8 : t == 145 ? 6 : t == 146 ? 7 : t >= 147 && t <= 149 ? -(t - 142) : 0;
+}
 
 bool tq_isa_ok(TqIsa isa) {
 #if defined(STRATA_TQ_X86)
@@ -168,36 +170,50 @@ ActSet& unpack_all(const void* const* act, int n, int nt) {
     return *set;
 }
 
-template<int K>
-void pair_rows(const uint8_t* w, size_t row_bytes, int n, const tq_detail::TqAct* const* a, int nt,
-               float* const* out, int r0, int r1) {
+template <int K>
+void pair_rows(const uint8_t* w, size_t row_bytes, int n, const tq_detail::TqAct* const* a, int nt, float* const* out,
+               int r0, int r1) {
     const int16_t* table = tq_state_table();
-    for (int r=r0; r<r1; ++r) {
+    for (int r = r0; r < r1; ++r) {
+        // Each 128-weight block meets four independently scaled Q8_0 blocks.
+        // Keep a separate accumulation chain for each to preserve rounding.
         float acc[kTqMaxTokens][4] = {};
-        for (int b=0; b<n/128; ++b) {
-            const uint8_t* block = w + size_t(r)*row_bytes + b*(2+8*K);
+        for (int b = 0; b < n / 128; ++b) {
+            const uint8_t* block = w + size_t(r) * row_bytes + b * (2 + 8 * K);
             const float scale = tq_detail::tq_half_to_float(tq_detail::tq_ld16(block));
             int dots[kTqMaxTokens][4] = {};
-            for (int step=0; step<64; ++step) {
-                const uint32_t state = strata::tqp::state<K>(block+2,step);
-                const int16_t* pair = table+4*state;
-                const int off=128*b+2*step, lane=step/16;
-                for (int t=0;t<nt;++t)
-                    dots[t][lane] += pair[0]*a[t]->q[off]+pair[1]*a[t]->q[off+1];
+            for (int step = 0; step < 64; ++step) {
+                const uint32_t state = strata::tqp::state<K>(block + 2, step);
+                // TQP uses only the first pair of the shared four-value table.
+                const int16_t* pair = table + 4 * state;
+                const int off = 128 * b + 2 * step, lane = step / 16;
+                for (int t = 0; t < nt; ++t)
+                    dots[t][lane] += pair[0] * a[t]->q[off] + pair[1] * a[t]->q[off + 1];
             }
-            for(int t=0;t<nt;++t)for(int lane=0;lane<4;++lane)
-                acc[t][lane]=std::fma(float(dots[t][lane]),scale*a[t]->d[4*b+lane],acc[t][lane]);
+            // Scale after the integer dot, in block order. Reassociating this
+            // expression or replacing the FMA changes the reference arithmetic.
+            for (int t = 0; t < nt; ++t)
+                for (int lane = 0; lane < 4; ++lane)
+                    acc[t][lane] = std::fma(float(dots[t][lane]), scale * a[t]->d[4 * b + lane], acc[t][lane]);
         }
-        for(int t=0;t<nt;++t)out[t][r]=((acc[t][0]+acc[t][1])+(acc[t][2]+acc[t][3]))*(1.0f/8192.0f);
+        // The lookup table stores weights multiplied by 2^13. Undo that once,
+        // after the fixed pairwise reduction of the four activation blocks.
+        for (int t = 0; t < nt; ++t)
+            out[t][r] = ((acc[t][0] + acc[t][1]) + (acc[t][2] + acc[t][3])) * (1.0f / 8192.0f);
     }
 }
 
 void rows_on(TqIsa isa, int kb, const uint8_t* w, size_t row_bytes, int n, const tq_detail::TqAct* const* a, int nt,
              float* const* out, int r0, int r1) {
     if (kb < 0) {
-        if(kb == -5) pair_rows<5>(w,row_bytes,n,a,nt,out,r0,r1);
-        else if(kb == -6) pair_rows<6>(w,row_bytes,n,a,nt,out,r0,r1);
-        else pair_rows<7>(w,row_bytes,n,a,nt,out,r0,r1);
+        // Negative dispatch tags denote TQP, which has no SIMD variant here.
+        // Do not feed its two-weight states into the four-weight TQ kernels.
+        if (kb == -5)
+            pair_rows<5>(w, row_bytes, n, a, nt, out, r0, r1);
+        else if (kb == -6)
+            pair_rows<6>(w, row_bytes, n, a, nt, out, r0, r1);
+        else
+            pair_rows<7>(w, row_bytes, n, a, nt, out, r0, r1);
         return;
     }
     switch (isa) {

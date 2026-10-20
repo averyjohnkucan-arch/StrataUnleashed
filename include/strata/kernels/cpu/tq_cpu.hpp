@@ -1,10 +1,13 @@
 // include/strata/kernels/cpu/tq_cpu.hpp - the trellis expert formats (TQ2_T / TQK6 / TQK7, ggml types 144-146 of the
-// agention llama.cpp fork) on the CPU: decode-and-dot against Q8_0 activations (ggml's block_q8_0), one or several
-// tokens per call, on AVX-512, AVX2 or plain C++.
+// agention llama.cpp fork) and pair-trellis TQP5/6/7 (147-149) on the CPU: decode-and-dot against Q8_0 activations
+// (ggml's block_q8_0), one or several tokens per call, on AVX-512, AVX2 or plain C++.
 //
 // THE FORMAT (third_party/ggml/ggml-common-tq.h): a 128-weight block is {fp16 d; 32 steps of K bits} (K = 8 / 6 / 7).
 // Step t has a 15-bit state; the state's hash picks two points (pairs) of a 2048-point fp16 codebook, which are
 // weights 4t..4t+3, times d.
+// TQP5/6/7 instead store 64 steps of 5/6/7 bits and decode two weights per
+// step. Their circular stream is defined in strata/artifact/tqp.hpp. They use
+// the first two entries of each state-table row; the other two belong to TQ.
 //
 // THE DECODE: a 32768 x 4 int16 table maps a state straight to its four weights at scale 2^13 (256 KiB, the
 // approach of the fork's ggml-cpu vec_dot): one 8-byte lookup per four weights, no hash.  The int16 rounding is
@@ -19,7 +22,8 @@
 // ggml-cpu's vec_dot (same integers, other float summation order) by float rounding only.
 //
 // THE KERNELS: `tq_isa()` picks AVX-512 (F/BW/VL/VBMI/VNNI, cpu_avx512_ok) or AVX2 (cpu_avx2_ok) at run time; the
-// scalar kernel is the reference (on a CPU without AVX2 the engine keeps ggml-cpu's vec_dot, see tq_kernels_enabled).
+// scalar kernel is the reference and fallback on CPUs without AVX2. TQP currently
+// always takes its scalar pair kernel, even when the requested ISA is AVX2/AVX-512.
 // STRATA_TQ_ISA=scalar|avx2|avx512 caps the choice (tests, A/B); STRATA_NO_TQ_KERNELS=1 makes native_expert.cpp use
 // ggml-cpu's vec_dot instead (the previous path).
 #pragma once
@@ -31,13 +35,19 @@ namespace strata::kernels::cpu {
 
 enum class TqIsa : int { scalar = 0, avx2 = 1, avx512 = 2 };
 
-/// TQ2_T (144), TQK6 (145), TQK7 (146).
+/// TQ2_T (144), TQK6 (145), TQK7 (146), TQP5 (147), TQP6 (148), TQP7 (149).
 bool tq_supported(int ggml_type) noexcept;
-/// Bits per step: 8, 6, 7 (0 for any other type).
+/// Dispatch tag: +8/+6/+7 for four-weight TQ, -5/-6/-7 for two-weight TQP.
+/// Zero means unsupported. The sign distinguishes layouts with the same bit width.
 int tq_kbits(int ggml_type) noexcept;
-/// Values per block of the trellis types, and bytes per block (2 + 4 * bits: 34, 26, 30).
+/// All trellis formats store 128 values per block. Supported block sizes are
+/// 34/26/30 bytes for TQ and 42/50/58 bytes for TQP, including the FP16 scale.
+/// Call tq_supported() first: this size helper does not validate unknown types.
 constexpr int kTqBlock = 128;
-inline size_t tq_block_bytes(int ggml_type) noexcept { const int k = tq_kbits(ggml_type); return (size_t) (k < 0 ? 2 - 8*k : 2 + 4*k); }
+inline size_t tq_block_bytes(int ggml_type) noexcept {
+    const int k = tq_kbits(ggml_type);
+    return (size_t) (k < 0 ? 2 - 8 * k : 2 + 4 * k);
+}
 /// The best ISA this CPU runs (capped by STRATA_TQ_ISA).
 TqIsa tq_isa();
 /// Whether this CPU can run `isa` at all (scalar: always).
