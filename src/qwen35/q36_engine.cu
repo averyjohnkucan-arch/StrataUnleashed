@@ -2663,7 +2663,8 @@ struct Engine {
                 }
             const int64_t maxr = hpin[10];
             const uint8_t* wbase = lhy(li) ? stream_take((int) li) : L.blobs;
-            MMQ::quantize(h, ent_tok, mq_x, L.L.gu_type, N, N, n_ent, st);
+            // each token's row once, written to its Kp sorted rows (rinv: entry -> sorted row): the bytes of quantizing per entry
+            MMQ::quantize_scatter(h, rinv, ent_tok, mq_x, L.L.gu_type, N, N, T, Kp, st);
             MMQ::Product gu;
             gu.w = wbase; gu.type = L.L.gu_type; gu.w_rows = 2 * FF; gu.w_cols = N; gu.expert_bytes = L.stride;
             gu.n = ne; gu.xq = mq_x; gu.bounds = rbounds; gu.ids = ident; gu.total_rows = n_ent; gu.max_rows = maxr;
