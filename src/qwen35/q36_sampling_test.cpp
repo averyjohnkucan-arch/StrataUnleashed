@@ -275,6 +275,22 @@ void shortlist_case() {
     if (bad || cases < 5000) ++g_fail;
 }
 
+/// 5a'. the GPU kernels' slicing: a row is usable only when its last (shorter) slice holds K logits
+void shortlist_rows_case() {
+    long long bad = 0, n_ok = 0;
+    for (int K : {1, 20, 91, 160})
+        for (size_t n = 32 * (size_t) K; n <= 32 * (size_t) K + 1500; ++n) {
+            const size_t S = (n + 31) / 32;
+            const long long last = (long long) n - 31 * (long long) S;
+            const bool want = last >= K;
+            const bool got = cand_rows_ok(n, K);
+            bad += want != got;
+            n_ok += got;
+        }
+    std::printf("  shortlist rows: usable exactly when the last slice holds K (%lld usable): %s\n", n_ok, bad ? "FAIL" : "yes");
+    if (bad || n_ok == 0) ++g_fail;
+}
+
 /// 5b. the spec loop over shortlists gives the loop's text and counts
 void shortlist_loop() {
     Sampling card;
@@ -372,6 +388,7 @@ int main() {
 
     // 5. --sample-gpu's shortlist
     shortlist_case();
+    shortlist_rows_case();
     shortlist_loop();
 
     std::printf("q36_sampling_test: %s\n", g_fail ? "FAILED" : "passed");

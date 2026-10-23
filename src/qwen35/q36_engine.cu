@@ -724,7 +724,7 @@ __device__ __forceinline__ void cand_select(int n, int K, KF kf, IDF idf, int* s
             const uint32_t u = i < n ? kf(i) : 0u;
             const bool in = i < n && (pass == 0 || (u >> (shift + 8)) == (pre >> (shift + 8)));
             const unsigned bin = (u >> shift) & 255u;
-#if !defined(__HIPCC__)
+#if !defined(__HIPCC__) && (!defined(__CUDA_ARCH__) || __CUDA_ARCH__ >= 700)
             if (pass == 0) {   // the top byte holds few values: one add per distinct bin of the warp (sm_70+)
                 const unsigned m = __match_any_sync(0xffffffffu, in ? bin : 256u);
                 if (in && (tid & 31) == __ffs(m) - 1) atomicAdd(&hist[bin], (unsigned) __popc(m));
@@ -1420,7 +1420,7 @@ struct Engine {
     bool sample_gpu = false;
     bool random_seed = false;   // --random-seed: a sampled request without a seed gets a fresh one (default: seed 0)
     Cand2 *d_cand = nullptr, *h_cand = nullptr, *d_part = nullptr;   // [kVerify + 1][K] the shortlists (device, pinned host)
-    int cand_K = 0;
+    int cand_K = 0;   // the K of the LAST cand_launch: cand_row reads with it (call it before the next launch)
     bool smp_prof = false, smp_check = false;     // STRATA_Q36_SAMPLE_PROFILE / STRATA_Q36_SAMPLE_CHECK
     double smp_ms = 0;                            // the sampler's host time of the request (copies, shortlists, chain)
     long long smp_calls = 0, smp_chk_n = 0, smp_chk_bad = 0;
@@ -1961,9 +1961,6 @@ struct Engine {
         amv = dalloc((size_t) kArgBlocks * kVerify);
         ami = dalloc_t<int32_t>((size_t) kArgBlocks * kVerify);
         CK(cudaHostAlloc((void**) &hpin, 64 * sizeof(int32_t), cudaHostAllocDefault));
-        d_cand = dalloc_t<Cand2>((size_t) (kVerify + 1) * sampling::kCandMax);
-        d_part = dalloc_t<Cand2>((size_t) (kVerify + 1) * kCandBlocks * sampling::kCandMax);
-        CK(cudaHostAlloc((void**) &h_cand, (size_t) (kVerify + 1) * sampling::kCandMax * sizeof(Cand2), cudaHostAllocDefault));
         n_chunk = (ctx + kChunkCells - 1) / kChunkCells;
         // 64 query tokens per attention batch; the split-K path only takes batches of <= kGemmT (sized so with
         // the grouped-query kernel: 0.875 GiB less at 262144 cells)
@@ -3687,6 +3684,11 @@ struct Engine {
     cudaEvent_t ce0 = nullptr, ce1 = nullptr;
     double smp_kernel_ms = 0;   // STRATA_Q36_SAMPLE_PROFILE: the shortlist kernel's own time (plain and draft rows)
     void cand_launch(const float* lg, int ld, int n, int rows, int K) {
+        if (!d_cand) {   // (only with --sample-gpu: the buffers are not made otherwise)
+            d_cand = dalloc_t<Cand2>((size_t) (kVerify + 1) * sampling::kCandMax);
+            d_part = dalloc_t<Cand2>((size_t) (kVerify + 1) * kCandBlocks * sampling::kCandMax);
+            CK(cudaHostAlloc((void**) &h_cand, (size_t) (kVerify + 1) * sampling::kCandMax * sizeof(Cand2), cudaHostAllocDefault));
+        }
         if (smp_prof) {
             if (!ce0) { CK(cudaEventCreate(&ce0)); CK(cudaEventCreate(&ce1)); }
             CK(cudaEventRecord(ce0, st));
@@ -3752,6 +3754,15 @@ struct Engine {
             CK(cudaStreamSynchronize(st));
             cand_check(d, n, n, rows, K);
         }
+        // narrow rows: widths 32 K + r where the last (shorter) slice still holds K (the rows' start is the same data)
+        for (int K : {1, 20, 91, 135, sampling::kCandMax})
+            for (int r : {0, 1, 3, 17, 100, 333, 700, 1000, 1500, 3000}) {
+                const int w = 32 * K + r;
+                if (!sampling::cand_rows_ok((size_t) w, K)) continue;
+                cand_launch(d, n, w, rows, K);
+                CK(cudaStreamSynchronize(st));
+                cand_check(d, n, w, rows, K);
+            }
         CK(cudaFree(d));
         std::fprintf(stderr, "strata-q36: sample selftest: %lld shortlists on tie-heavy rows, %lld mismatches\n", smp_chk_n,
                      smp_chk_bad - bad0);

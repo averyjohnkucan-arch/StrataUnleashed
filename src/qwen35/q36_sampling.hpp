@@ -93,7 +93,7 @@ inline int chain(std::vector<float>& lg, const Sampling& s, const std::vector<in
     return -1;
 }
 
-/// SHORTLIST (--sample-gpu): the GPU hands back the K highest RAW logits of a row (k_topk_cand, the tie rule, any order)
+/// SHORTLIST (--sample-gpu): the GPU hands back the K highest RAW logits of a row (k_cand_part / k_cand_merge, the tie rule, any order)
 /// instead of the 1 MB row.  Penalties here only lower a logit (repeat >= 1, freq >= 0, present >= 0), so with
 /// K = top_k + the number of penalised ids no outside id can reach the penalised top_k: the shortlist holds the same
 /// top_k as the whole row, and chain_c gives chain()'s bits.
@@ -106,11 +106,16 @@ struct Cand {
 constexpr int kCandMax = 160;
 /// the GPU kernels split a row in kCandBlocks slices of at most kCandSlice logits, each holding at least K
 constexpr int kCandBlocks = 32, kCandSlice = 8192;
+/// a row of n logits is cut in slices of ceil(n / 32); every slice, the last (shorter) one too, must hold K of them
+inline bool cand_rows_ok(size_t n, int K) {
+    const size_t S = (n + kCandBlocks - 1) / kCandBlocks;
+    return n <= (size_t) kCandBlocks * kCandSlice && n > (size_t) (kCandBlocks - 1) * S && n - (size_t) (kCandBlocks - 1) * S >= (size_t) K;
+}
 inline int cand_need(const Sampling& s, const std::vector<int32_t>& hist, const int32_t* extra, int n_extra, size_t n_row) {
     int kk = s.temperature <= 0.f ? 1 : std::max(1, std::min(s.top_k > 0 ? s.top_k : 64, (int) n_row));
     int P = 0;
     if (penalised(s)) {
-        if (s.repeat < 1.f || s.freq < 0.f || s.present < 0.f || s.last_n < 0) return 0;
+        if (!(s.repeat >= 1.f) || !(s.freq >= 0.f) || !(s.present >= 0.f) || s.last_n < 0) return 0;   // (NaN too)
         std::map<int, int> seen;
         const size_t want = (size_t) s.last_n + (size_t) n_extra;
         const size_t tot = hist.size() + (size_t) n_extra;
@@ -119,7 +124,7 @@ inline int cand_need(const Sampling& s, const std::vector<int32_t>& hist, const 
         P = (int) seen.size();
     }
     const int K = kk + P;
-    return K > kCandMax || n_row < (size_t) kCandBlocks * (size_t) K || n_row > (size_t) kCandBlocks * kCandSlice ? 0 : K;
+    return K > kCandMax || !cand_rows_ok(n_row, K) ? 0 : K;
 }
 inline int chain_c(Cand& cd, size_t n_row, const Sampling& s, const std::vector<int32_t>& hist, Chain& c) {
     if (penalised(s)) {

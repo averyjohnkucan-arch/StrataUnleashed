@@ -285,13 +285,19 @@ on the `strata-q36` command line.
   kernels (`k_cand_part`, `k_cand_merge`) return the K highest raw logits of each row (K = `top_k` + the number of distinct ids the penalties touch,
   at most 160; ties: the higher logit, then the lower id), and the host applies the penalties to them and runs the rest of the chain.
   Penalties only lower a logit, so the shortlist holds the same top_k as the whole row and the token, the rng use and the text
-  are the same as without the option (a request with a penalty that raises a logit, or K past 160, copies the row whole). A
+  are the same as with the whole row (a request with a penalty that raises a logit, K past 160, or a row too narrow for the 32
+  slices copies the row whole). The tie rule is not new to the option: without it too, ids with exactly equal logits now sort by
+  id (they were in an unspecified order), so a sampled text can change in such a tie. Measured (RTX 5080, Core Ultra 9 285K,
+  Q4_K_M ssmbf16, 32K context, 10 short prompts x 160 tokens, card sampling, seed 7, same text): sampled decode 183 -> 189 tok/s
+  (+3%), sampled `--mtp 2 --mtp-sampled q --spec-min-p 0.5` 210 -> 229 tok/s (+9%, one run; another run of the build gave 215).
+  The saving is a fixed host time per sampled row, so it is a smaller share at long context. A
   speculative window's rows and the drafts of `--mtp-sampled q` use it too, one copy of a few KB per window instead of one MB
   per row. `STRATA_Q36_SAMPLE_PROFILE=1` logs the sampler's host time per request; `STRATA_Q36_SAMPLE_CHECK=1` checks every
   shortlist against the whole row (slow; a test aid).
 - **`--random-seed`** (env `STRATA_Q36_RANDOM_SEED=1`): a sampled request that gives no `seed` gets a fresh one (logged as
   `sampling seed N`). Without it an unseeded request uses seed 0, so the same prompt gives the same text every time, which also
-  means a client that retries a prompt at temperature 1.0 gets the same answer again. A request with a `seed` is unchanged.
+  means a client that retries a prompt at temperature 1.0 gets the same answer again. A request with a `seed` is unchanged (the
+  server sends none for seed 0, so that counts as unseeded). The drawn seed is only in the engine log, not returned to the client.
 - **`--mtp-sampled match | q`** (with `--mtp N`): sampled requests draft with the MTP block too (without it only greedy ones do).
   `match` drafts the block's greedy pick and keeps each window row's token as a plain decode step samples it, so a fixed seed gives the
   same text as without drafts (until a near tie falls the other way in the last bits); `q` samples the drafts from the block's own
