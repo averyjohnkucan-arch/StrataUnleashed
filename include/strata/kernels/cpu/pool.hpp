@@ -365,14 +365,16 @@ private:
     alignas(64) std::atomic<uint32_t> done_{0};
     alignas(64) std::atomic<uint32_t> parked_{0};
     alignas(64) std::atomic<uint32_t> epoch_{0};
-    // POOL-4: the warm set (written by the host before warm_seq_ moves), how many workers finished loading it, and the
+    // POOL-4: the warm set (a seqlock: warm_seq_ is odd while the host writes it and moves to the next even value when it is
+    // whole; a reader that sees the value change discards what it read), how many workers finished loading THAT set (warm_done_:
+    // the set's seq in the high 32 bits, the count in the low ones, so a count of an older set never counts), and the
     // static row slices of the current native phase (jobs [static_first_, static_first_ + static_n_), one slice per worker)
     bool warm_on_ = false;
     const NativeFmt* warm_fmt_ = nullptr;
     const uint8_t* warm_blob_[kMaxWarm] = {};
     int warm_n_ = 0, static_first_ = 0, static_n_ = 0;
     alignas(64) std::atomic<uint32_t> warm_seq_{0};
-    alignas(64) std::atomic<uint32_t> warm_done_{0};
+    alignas(64) std::atomic<uint64_t> warm_done_{0};
     std::unique_ptr<std::atomic<uint32_t>[]> static_epoch_;
     alignas(64) std::atomic<bool> stop_{false};
     // The sleep after `kSpinBeforeSleep`.  `sleepers_` is how `publish` knows whether anyone needs waking, so the

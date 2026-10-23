@@ -1140,6 +1140,9 @@ struct Model {
 };
 
 constexpr size_t kMmqTail = 4096;
+// the defaults of --pool-warm K and --prefetch-copies 0|1 (--no-pool-warm: K = 0; the envs STRATA_Q36_POOL_WARM / STRATA_Q36_PREFETCH_COPIES override
+// these, the flags override the envs)
+constexpr int kPoolWarmDefault = 0, kPrefetchCopiesDefault = 1;
 size_t gcd_sz(size_t a, size_t b) { return b ? gcd_sz(b, a % b) : a; }
 size_t lcm_sz(size_t a, size_t b) { return a / gcd_sz(a, b) * b; }
 size_t block_bytes(int type) {
@@ -1621,7 +1624,8 @@ struct Engine {
     float *d_pflog = nullptr, *h_pflog = nullptr;   // mapped: the next layer's predicted router logits ([2][kPfRows][ne])
     int pf_for = -1;              // the layer the pending prediction is for
     long long pf_fwd = 0;         // main forwards so far (the slots' reuse rule: never one a running forward's plan read)
-    bool pf_no_copy = false;   // STRATA_Q36_PREFETCH_COPIES=0 (test): predictions run, no copy is issued
+    bool pf_no_copy = false;   // --prefetch-copies 0 (STRATA_Q36_PREFETCH_COPIES=0): predictions run, no copy is issued
+    int pool_warm_want = -1, pf_copies_want = -1;   // --pool-warm K / --prefetch-copies 0|1 (-1: not given; the envs are aliases)
     int pf_budget = 64, pf_used = 0;   // copies per forward, used this forward
     int32_t pf_gen = 0;           // the prefetch copies' numbers (1 .. INT32_MAX, then 1 again; STRATA_Q36_PF_GEN_START for tests)
     long long pf_copies = 0, pf_hits = 0, pf_preds = 0, pf_late = 0;
@@ -4092,9 +4096,15 @@ bool place_experts(Model& m, Engine& E, double vram_gib, int threads, int hybrid
         }
     }
     E.pool = std::make_unique<C::ExpertPool>(threads);
-    if (const char* pc = std::getenv("STRATA_Q36_PREFETCH_COPIES")) E.pf_no_copy = std::atoi(pc) == 0;
-    if (const char* wk = std::getenv("STRATA_Q36_POOL_WARM")) {   // POOL-4: experts per layer the parked pool workers pre-load
-        E.pool_warm_k = std::max(0, std::min(C::ExpertPool::kMaxWarm, std::atoi(wk)));
+    {   // the flag, else the env alias, else the default (kPrefetchCopiesDefault)
+        const char* pc = std::getenv("STRATA_Q36_PREFETCH_COPIES");
+        const int copies = E.pf_copies_want >= 0 ? E.pf_copies_want : pc ? std::atoi(pc) : kPrefetchCopiesDefault;
+        E.pf_no_copy = copies == 0;
+    }
+    const char* wk = std::getenv("STRATA_Q36_POOL_WARM");
+    const int warm_k = E.pool_warm_want >= 0 ? E.pool_warm_want : wk ? std::atoi(wk) : kPoolWarmDefault;
+    if (warm_k > 0) {   // POOL-4: experts per layer the parked pool workers pre-load (needs the lookahead of --expert-prefetch)
+        E.pool_warm_k = std::max(0, std::min(C::ExpertPool::kMaxWarm, warm_k));
         if (E.pool_warm_k > 0) E.pool->enable_warm(true);
         if (E.pool_warm_k > 0 && !E.pool->warm_enabled()) E.pool_warm_k = 0;
     }
@@ -4950,7 +4960,7 @@ int strata::qwen35::run(int argc, char** argv) {
     // the opt-ins of this engine path (docs/QWEN36.md): off, they leave the default path as it was
     std::string kv = "fp32", tokens_file, expert_profile, expert_profile_save;
     bool gqa_attn = false, zero_copy = false, snapshot_host = false, fused_pattn = false, chunked_gdn = false, fused_pattn_i8 = false, attn_mma = false;
-    int expert_prefetch = 0, decode_swaps = -1, snapshots = 0;
+    int expert_prefetch = 0, decode_swaps = -1, snapshots = 0, pool_warm = -1, prefetch_copies = -1;
     int64_t snapshot_min = 4096;
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
@@ -5011,6 +5021,9 @@ int strata::qwen35::run(int argc, char** argv) {
         else if (a == "--expert-prefetch") expert_prefetch = std::atoi(next().c_str());   // P prefetch slots per layer
         else if (a == "--expert-profile") expert_profile = next();             // the main path's names: the initial slots
         else if (a == "--expert-profile-save") expert_profile_save = next();   // ... and what this run learned, at exit
+        else if (a == "--no-pool-warm") pool_warm = 0;
+        else if (a == "--pool-warm") pool_warm = std::atoi(next().c_str());   // K predicted experts per layer warmed in the pool workers
+        else if (a == "--prefetch-copies") prefetch_copies = std::atoi(next().c_str());   // 0: the lookahead without the PCIe copies
         else if (a == "--decode-swaps") decode_swaps = std::atoi(next().c_str());   // the hybrid slots' swaps per 32 tokens
         else if (a == "--snapshots") snapshots = std::atoi(next().c_str());       // recurrent-state snapshots per session
         else if (a == "--snapshot-min") snapshot_min = std::atoll(next().c_str());
@@ -5029,7 +5042,7 @@ int strata::qwen35::run(int argc, char** argv) {
                          "--bench-pp N --bench-tg N)\n"
                          "       opt-ins (docs/QWEN36.md): [--kv fp32|fp16|int8|k8v4] [--gqa-attn] [--attn-mma] [--fused-prompt-attn[-i8]] [--chunked-gdn] [--mtp-sampled off|match|q]\n"
                          "       [--spec-min-p P] [--snapshots K] [--snapshot-min N] [--snapshot-host] [--expert-profile F] [--expert-profile-save F]\n"
-                         "       [--expert-prefetch P] [--hybrid-zero-copy] [--decode-swaps N] [--sample-gpu] [--random-seed]\n");
+                         "       [--expert-prefetch P] [--prefetch-copies 0|1] [--pool-warm K | --no-pool-warm] [--hybrid-zero-copy] [--decode-swaps N] [--sample-gpu] [--random-seed]\n");
             return 2;
         }
     }
@@ -5082,6 +5095,8 @@ int strata::qwen35::run(int argc, char** argv) {
     if (decode_swaps >= 0) E.decode_swaps = decode_swaps;
     E.zc = zero_copy;
     E.pf_want = expert_prefetch;
+    E.pool_warm_want = pool_warm;
+    E.pf_copies_want = prefetch_copies;
     E.expert_profile = expert_profile;
     E.count_heat = !expert_profile_save.empty();
     // recurrent-state snapshots per session (--snapshots K, up to 4), taken after reads of prompts of --snapshot-min

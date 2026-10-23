@@ -326,11 +326,11 @@ on the `strata-q36` command line.
   default; the main path's `--adapt-swaps` counts another round, so the name differs).
 
 
-- **`STRATA_Q36_POOL_WARM=K`** (hybrid mode with `--expert-prefetch P`; test setting, off by default): the router lookahead that feeds the prefetch also names the next layer's
+- **`--pool-warm K`** (hybrid mode with `--expert-prefetch P`; off by default; env alias `STRATA_Q36_POOL_WARM=K`) and **`--prefetch-copies 0|1`** (0 keeps the lookahead and drops the PCIe copies; env alias `STRATA_Q36_PREFETCH_COPIES`): the router lookahead that feeds the prefetch also names the next layer's
   likely experts. The K best that have no VRAM slot and no copy are posted to the CPU pool: its parked workers load, into their own caches, the rows they will compute
   (the same row split by worker id), and when the layer's real call comes a warmed expert's rows go to the worker that loaded them. A warm call of one expert takes about
   9 us instead of 24. The dots are the same, so the logits are bitwise identical (`--dump-full-logits` at 4K and 14K, a pool unit test with 400 random calls). The workers
-  load only while idle (a published batch stops them), but the loads read the same RAM as the prefetch copies: with copies on, the two cancel each other. `STRATA_Q36_PREFETCH_COPIES=0` (test) keeps the lookahead and drops the copies.
+  load only while idle (a published batch stops them), but the loads read the same RAM as the prefetch copies: with copies on, the two cancel each other. `--prefetch-copies 0` keeps the lookahead and drops the copies. Use them together: `--expert-prefetch 2 --prefetch-copies 0 --pool-warm 3`. `--no-pool-warm` is the explicit off switch (the flag beats the env alias). The warm-up needs the lookahead (`--expert-prefetch P`, P >= 1) and, to pay, the copies off: with the copies on K=2 or 4 changes nothing, and the two are alternatives on this machine (both read the RAM the pool already nearly fills). Copies off without the warm-up is a loss (-3.6% at 4K, -4% at 16K, -2% at 40K against the default: its two prefetch slots per layer are dead VRAM), and K=4 is slower than K=3 (K=6 and 8 more so: the load no longer fits the idle window). Measured as in the numbers above.
   RTX 5080, Core Ultra 9 285K, DDR5-6800, Sage-A1.5 Q4_K_M, production flags, `--mtp 0`, forced text, 256 tokens (two runs each, +-1%): copies off, K=3: 4K 203.7 / 204.4 tok/s,
   16K 182.1 / 181.1, 40K 189.5 / 188.5, against the production default (copies on, no warm-up) 193.4, 169.7, 183.1 (+5%, +7%, +3%).
   With `--mtp 2` (greedy, free text, 4K / 40K): 250.8 / 251.3 and 218.3 / 218.7 against 243.3 / 235.7 and 210.7 / 201.4 (+5%, +6%). With the copies on, K=2 or 4 changes nothing (193.9 / 169.9 / 183.2).

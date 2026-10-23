@@ -1001,8 +1001,11 @@ void ExpertPool::worker(int id) {
         while (epoch_.load(std::memory_order_acquire) == seen) {
             if (stop_.load(std::memory_order_relaxed)) return;
             if (warm_on_ && warm_seq_.load(std::memory_order_relaxed) != warm_seen) {   // POOL-4: load the predicted rows
-                warm_seen = warm_seq_.load(std::memory_order_acquire);
-                warm_run(id, seen);
+                const uint32_t ws = warm_seq_.load(std::memory_order_acquire);
+                if ((ws & 1u) == 0) {   // (odd: the host is writing the set; the even value that follows is a new one)
+                    warm_seen = ws;
+                    warm_run(id, seen);
+                }
                 continue;
             }
 #if defined(_MSC_VER) && defined(_M_X64) && !defined(__clang__)   // MSVC proper: clang-cl (the Windows HIP build) has no WAITPKG intrinsics by default
@@ -1194,11 +1197,13 @@ void ExpertPool::enable_warm(bool on) {
 void ExpertPool::warm_post(const NativeFmt& f, const uint8_t* const* blobs, int n) {
     if (!warm_on_ || n <= 0) return;
     n = (std::min)(n, kMaxWarm);
+    const uint32_t s0 = warm_seq_.load(std::memory_order_relaxed);   // even: only the host moves it
+    warm_seq_.store(s0 + 1, std::memory_order_seq_cst);             // odd: the set is being written
     warm_fmt_ = &f;
     for (int i = 0; i < n; ++i) warm_blob_[i] = blobs[i];
     warm_n_ = n;
-    warm_done_.store(0, std::memory_order_relaxed);
-    warm_seq_.fetch_add(1, std::memory_order_release);
+    warm_done_.store((uint64_t) (s0 + 2) << 32, std::memory_order_relaxed);
+    warm_seq_.store(s0 + 2, std::memory_order_release);
     ++warm_posts;
 }
 
@@ -1207,11 +1212,13 @@ void ExpertPool::warm_post(const NativeFmt& f, const uint8_t* const* blobs, int 
 // warm_done_; only a set every worker finished is used as static.
 void ExpertPool::warm_run(int id, uint32_t epoch) {
     const uint32_t seq = warm_seq_.load(std::memory_order_acquire);
+    if (seq & 1u) return;
     const NativeFmt* const f = warm_fmt_;
-    const int n = warm_n_;
+    const int n = (std::min)(warm_n_, kMaxWarm);
     const uint8_t* blobs[kMaxWarm];
     for (int i = 0; i < n; ++i) blobs[i] = warm_blob_[i];
-    if (f == nullptr) return;
+    std::atomic_thread_fence(std::memory_order_acquire);
+    if (f == nullptr || warm_seq_.load(std::memory_order_relaxed) != seq) return;   // rewritten while read: the next set is the one
     __m128i acc = _mm_setzero_si128();
     auto touch = [&](const uint8_t* p, size_t bytes) -> bool {
         for (size_t o = 0; o < bytes; o += 8192) {
@@ -1233,7 +1240,12 @@ void ExpertPool::warm_run(int id, uint32_t epoch) {
     }
     volatile int sink = _mm_cvtsi128_si32(acc);
     (void) sink;
-    if (ok) warm_done_.fetch_add(1, std::memory_order_release);
+    if (ok) {   // count only into this set's own tag
+        uint64_t d = warm_done_.load(std::memory_order_relaxed);
+        while ((uint32_t) (d >> 32) == seq &&
+               !warm_done_.compare_exchange_weak(d, d + 1, std::memory_order_release, std::memory_order_relaxed)) {
+        }
+    }
 }
 
 // One row range [r0, r1) of job `e` in the current mode-5 (gate/up) or mode-6 (down) phase: the dynamic tasks' and the warmed experts'
@@ -1452,7 +1464,7 @@ void ExpertPool::run_split_multi_native(const NativeFmt& f, ExpertJobMulti* jobs
     // POOL-4: the jobs whose experts every worker has loaded (warm_post) go last, and each worker computes its own rows of them
     // (the rows it loaded); the others are split over the shared claims as before.  Only for jobs in this format.
     const bool warm_set = warm_on_ && numa_n_ == 0 && warm_n_ > 0 && warm_fmt_ == &f &&
-                          warm_done_.load(std::memory_order_acquire) == (uint32_t) n_ &&
+                          warm_done_.load(std::memory_order_acquire) == (((uint64_t) warm_seq_.load(std::memory_order_acquire) << 32) | (uint32_t) n_) &&
                           !q2_native_kernels(f.gu_type) && !q2_native_kernels(f.d_type);
     int n_warm_all = 0;
     // more distinct experts than buffers: run them in batches

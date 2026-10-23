@@ -21,22 +21,13 @@ static void make_blob(const cpu::NativeFmt& f, uint8_t* blob, std::mt19937& rng)
     for (int64_t r = 0; r < 2 * kFF; ++r) { for (int64_t i = 0; i < kH; ++i) row[(size_t) i] = nd(rng); tg->from_float(row.data(), blob + (size_t) r * f.gu_row, kH); }
     for (int64_t r = 0; r < kH; ++r) { for (int64_t i = 0; i < kFF; ++i) row[(size_t) i] = nd(rng); td->from_float(row.data(), blob + f.down_off + (size_t) r * f.d_row, kFF); }
 }
-int main() {
-    ggml_cpu_init();
-    cpu::NativeFmt f; std::string err;
-    if (!cpu::native_fmt(12, 12, kH, kFF, f, err)) { fprintf(stderr, "%s\n", err.c_str()); return 1; }
+// returns 77 (ctest SKIP) when no pool of this machine can warm, 1 on a mismatch or a warm path that never ran, else 0
+static int run_pool(int workers, const cpu::NativeFmt& f, std::vector<std::vector<uint8_t>>& blobs, std::vector<std::vector<uint8_t>>& act) {
     const int E = 24, MAXJ = 8;
     std::mt19937 rng(11);
-    std::vector<std::vector<uint8_t>> blobs(E, std::vector<uint8_t>(f.bytes + 64));
-    for (int e = 0; e < 4; ++e) make_blob(f, blobs[e].data(), rng);
-    for (int e = 4; e < E; ++e) blobs[e] = blobs[e % 4];
-    for (int e = 0; e < E; ++e) { std::mt19937 r2(100 + e); std::normal_distribution<float> nd(0.f, 0.02f);   // distinct weights: perturb scales
-        for (size_t i = 0; i < f.bytes; i += 97) blobs[e][i] ^= (uint8_t) (r2() & 0x3); }
-    std::vector<std::vector<uint8_t>> act(3, std::vector<uint8_t>(cpu::kNativeActBytes));
-    for (int t = 0; t < 3; ++t) { std::vector<float> x(kH); std::normal_distribution<float> nd(0.f, 1.f); for (auto& v : x) v = nd(rng); cpu::native_quant_act(f, x.data(), act[t].data()); }
-    cpu::ExpertPool pool(16);
+    cpu::ExpertPool pool(workers);
     pool.enable_warm(true);
-    if (!pool.warm_enabled()) { printf("pool_warm_test: SKIPPED (the pool cannot warm here: unpinned workers, a NUMA split or one worker)\n"); return 0; }
+    if (!pool.warm_enabled()) { printf("pool_warm_test: %d workers: the pool cannot warm here (unpinned workers, a NUMA split or one worker)\n", workers); return 77; }
     std::vector<std::vector<float>> out_ref((size_t) E * 3, std::vector<float>(kH)), out((size_t) E * 3, std::vector<float>(kH));
     auto run = [&](const std::vector<int>& ids, std::vector<std::vector<float>>& dst) {
         std::vector<cpu::ExpertJobMulti> jobs;
@@ -66,7 +57,31 @@ int main() {
             if (std::memcmp(out_ref[(size_t) e * 3 + t].data(), out[(size_t) e * 3 + t].data(), kH * 4) != 0) { ++bad; printf("MISMATCH it %d mode %d expert %d tok %d\n", it, mode, e, t); }
         ++runs;
     }
-    printf("pool_warm_test: %d runs, %d mismatches, warm sets posted %lld, complete at the call %lld; calls none/some/all %lld/%lld/%lld\n", runs, bad,
+    printf("pool_warm_test: %d workers asked, %d running: %d runs, %d mismatches, warm sets posted %lld, complete at the call %lld; calls none/some/all %lld/%lld/%lld\n", workers, pool.workers(), runs, bad,
            (long long) pool.warm_posts, (long long) pool.warm_full, (long long) pool.wc_calls[0], (long long) pool.wc_calls[1], (long long) pool.wc_calls[2]);
+    if (pool.warm_full == 0 || pool.wc_calls[1] + pool.wc_calls[2] == 0) { printf("pool_warm_test: %d workers: the warm path never ran\n", workers); return 1; }
     return bad ? 1 : 0;
+}
+
+int main() {
+    ggml_cpu_init();
+    cpu::NativeFmt f; std::string err;
+    if (!cpu::native_fmt(12, 12, kH, kFF, f, err)) { fprintf(stderr, "%s\n", err.c_str()); return 1; }
+    const int E = 24;
+    std::mt19937 rng(11);
+    std::vector<std::vector<uint8_t>> blobs(E, std::vector<uint8_t>(f.bytes + 64));
+    for (int e = 0; e < 4; ++e) make_blob(f, blobs[e].data(), rng);
+    for (int e = 4; e < E; ++e) blobs[e] = blobs[e % 4];
+    for (int e = 0; e < E; ++e) { std::mt19937 r2(100 + e);   // distinct weights: perturb scales
+        for (size_t i = 0; i < f.bytes; i += 97) blobs[e][i] ^= (uint8_t) (r2() & 0x3); }
+    std::vector<std::vector<uint8_t>> act(3, std::vector<uint8_t>(cpu::kNativeActBytes));
+    for (int t = 0; t < 3; ++t) { std::vector<float> x(kH); std::normal_distribution<float> nd(0.f, 1.f); for (auto& v : x) v = nd(rng); cpu::native_quant_act(f, x.data(), act[t].data()); }
+    // worker counts that divide n_ff / n_embd (4, 16) and ones that do not (3, 5, 7, 11): the row slices round differently
+    int ran = 0, skipped = 0;
+    for (int w : {4, 5, 7, 11, 3, 16}) {
+        const int rc = run_pool(w, f, blobs, act);
+        if (rc == 77) ++skipped; else if (rc != 0) return rc; else ++ran;
+    }
+    if (ran == 0) return 77;
+    return 0;
 }
