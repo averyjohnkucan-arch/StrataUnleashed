@@ -248,6 +248,11 @@ template<class KV> void run(int ctx, int group, int tokens, bool sessions, cudaS
 }
 int main() {
     using q8 = q36attn::q8_cell;
+    // ctest skips (SKIP_RETURN_CODE 77) without a device, and below sm_80 (part_q8x streams the cache with cp.async)
+    int ndev = 0, major = 0;
+    if (cudaGetDeviceCount(&ndev) != cudaSuccess || ndev == 0) { std::puts("SKIP: no GPU"); return 77; }
+    CK(cudaDeviceGetAttribute(&major, cudaDevAttrComputeCapabilityMajor, 0));
+    if (major < 8) { std::printf("SKIP: sm_%d0 (< sm_80)\n", major); return 77; }
     cudaStream_t stream; CK(cudaStreamCreate(&stream));
     run<float>(5, 1, 1, false, stream); run<__half>(5, 1, 1, false, stream); run<q8>(5, 1, 1, false, stream);
     run<float>(257, 8, 3, true, stream); run<__half>(257, 8, 3, true, stream); run<q8>(257, 8, 3, true, stream);
