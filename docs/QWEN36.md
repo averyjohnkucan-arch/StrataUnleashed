@@ -73,7 +73,7 @@ on an RTX 5080 with DDR5-6400 dual channel, two long agent sessions with a Qwen3
   a whole prompt chunk: 8 MiB of VRAM instead of 128 MiB at `--prefill 2048`. The room goes to the expert slots, so the default slot count
   rises: 78 -> 80 cache slots per layer on the RTX 5080 at 262,144 cells, int8 K / V, `--snapshots 2`, `--expert-prefetch 2`, with the same
   headroom left (the log says "VRAM left after the experts' buffers"). Forced-text decode 193.1 / 169.7 / 183.0 -> 194.8 / 171.0 / 183.2 tok/s
-  at 4K / 16K / 40K (one run each, noise under 1%). `--expert-vram` is not changed by it.
+  at 4K / 16K / 40K (one run each, noise under 1%). An explicit `--expert-vram` budget is not credited with the old buffers: it buys at most one slot less (8 MiB) than before.
 
 `STRATA_REUSE_DIAG=1` (off by default: it logs a few of the conversation's tokens) makes the engine log the token where a prompt parts
 from a session's held tokens, and the server say it in text.
@@ -338,11 +338,15 @@ on the `strata-q36` command line.
   16K 182.1 / 181.1, 40K 189.5 / 188.5, against the production default (copies on, no warm-up) 193.4, 169.7, 183.1 (+5%, +7%, +3%).
   With `--mtp 2` (greedy, free text, 4K / 40K): 250.8 / 251.3 and 218.3 / 218.7 against 243.3 / 235.7 and 210.7 / 201.4 (+5%, +6%). With the copies on, K=2 or 4 changes nothing (193.9 / 169.9 / 183.2).
 
-**Slot swaps.** The log's `rebalance:` line says how many calls, swaps and milliseconds the slot swaps took (RTX 5080, DDR5-6800, production
+**Slot swaps.** The log's `rebalance:` line says how many calls, swaps and milliseconds the slot swaps took (RTX 5080, DDR5-6800 (this box now; the DDR5-6400 figures above are older runs), production
 flags, 256 forced tokens after a 4K / 16K / 40K prompt): decode 8 calls, 456 / 369 / 227 swaps, 20.8 / 16.7 / 10.8 ms (0.08 / 0.07 /
 0.04 ms per token, 1.5% / 1.2% / 0.8% of it); after the prompt 1100 / 990 / 960 swaps, 44.6 / 40.3 / 39.3 ms (about 40 us a swap).
 With `--async-swaps` the same decode calls take 2.0 / 2.4 / 2.8 ms of host time and forced-text decode goes 194.8 / 171.5 / 183.9 to
-196.6 / 172.1 / 184.5 tok/s (+0.9% / +0.4% / +0.3%; noise under 1%). `--async-after-prompt` takes the 40-45 ms out of the prompt read (pp4096
+196.6 / 172.1 / 184.5 tok/s (+0.9% / +0.4% / +0.3%; the sync runs repeat within +-0.4%, so only the 4K gain is outside the noise).
+Its class is C: a swapped-in expert becomes visible when its copy has landed and the next forward starts, which can be one forward later
+than in the synchronous path; in the 65-step KL runs (two rebalance calls) the logits were identical to the synchronous ones, which does not
+carry over to long decodes.
+`--async-after-prompt` takes the 40-45 ms out of the prompt read (pp4096
 5,609 to 5,937 tok/s) but the 1,000 experts then arrive over the next tokens, and decode of the next 256 tokens is 1.2-1.4% slower: it pays
 when the answer is shorter than about 600 tokens. A bigger `--decode-swaps` (128, 256) raises the GPU share (4K: 86.5 / 86.8 / 87.3%) but not the speed,
 with or without `--async-swaps`.
@@ -361,8 +365,9 @@ Test settings: `STRATA_Q36_ATTN_OLD=1` (the first int8 attention kernel, `part_q
 `STRATA_Q36_SNAPSHOT_TEST=L[,J]` (`--tokens` mode: read L tokens, take a snapshot, read J others, restore it, read the rest; its
 logits against a plain read),
 `STRATA_Q36_PF_GEN_START=N` (with `--expert-prefetch`: the prefetch copies' counter starts at N, close to 2^31 to test its wrap),
-`STRATA_Q36_PF_CHECK=1` (the host's slot tables against the device's at every forward, and the host's against its own bookkeeping; the log's
-`table check:` line counts the mismatches; it synchronizes the stream, so it is slow), `STRATA_Q36_ASYNC_SWAPS=1/2/3` (the two async bits, as the two flags).
+`STRATA_Q36_PF_CHECK=1` (the host's slot tables against the device's at every forward, the host's against its own bookkeeping, and four
+cache slots per layer plus every prefetch slot in the table byte for byte against the host copy; the log's `table check:` line counts the
+mismatches; it synchronizes the stream and copies about 0.5 GB a forward, so it is slow; not with the MTP-only placement), `STRATA_Q36_ASYNC_SWAPS=1/2/3` (the two async bits, as the two flags).
 
 ## Not done / limits
 

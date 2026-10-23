@@ -1597,7 +1597,7 @@ struct Engine {
     // --async-swaps: the rebalance's slot copies go to a copy stream (swst) into the slot of an expert that already left the
     // table, in batches of kSwapBatch with an event each; an expert enters the host and device tables once its batch's event
     // is done (swap_settle, at the start of a forward, when nothing is in flight), so a slot is never read before it landed
-    int async_mask = 0;   // bit 0: the decode rebalance's copies, bit 1: the after-prompt rebalance's (--async-swaps: both)
+    int async_mask = 0;   // bit 0: the decode rebalance's copies (--async-swaps), bit 1: the after-prompt rebalance's (--async-after-prompt, alone or with it)
     bool async_swaps = false, arena_pinned = false;
     cudaStream_t swst = nullptr;
     cudaEvent_t ev_swfence = nullptr;
@@ -1607,7 +1607,7 @@ struct Engine {
     std::deque<SwapBatch> swap_q;
     std::vector<cudaEvent_t> swap_ev_free;
     std::vector<SwapItem> sw_new;
-    long long sw_taken = 0, sw_batches = 0, chk_calls = 0, chk_bad = 0;
+    long long sw_taken = 0, sw_batches = 0, chk_calls = 0, chk_bad = 0, chk_bytes = 0, chk_bytes_bad = 0;
     bool pf_check = std::getenv("STRATA_Q36_PF_CHECK") != nullptr;   // debug: the host's slot tables against the device's at every forward
     // the rebalance calls' own cost (the log's "rebalance:" line): [0] decode / verify rows, [1] after a prompt read
     long long rb_calls[2] = {0, 0}, rb_swaps[2] = {0, 0};
@@ -2465,7 +2465,7 @@ struct Engine {
         const int HK = (int) g.ssm_k_heads, HV = (int) g.ssm_v_heads, D = (int) g.ssm_state_size;
         const int C = (int) g.ssm_conv_channels;
         const int H = (int) g.n_head, HKV = (int) g.n_head_kv, HD = (int) g.head_dim;
-        if (li == 0 && (async_swaps || pf_check) && m->hybrid) {   // a new main forward: the swap copies that landed enter the tables
+        if (li == 0 && (async_swaps || pf_check) && m->hybrid && main_hybrid) {   // a new main forward: the swap copies that landed enter the tables
             if (async_swaps) swap_settle();
             if (pf_check) table_check();
         }
@@ -3183,16 +3183,19 @@ struct Engine {
         }
         sw_new.clear();
     }
-    /// ... and at the start of a forward (nothing in flight): the batches whose event is done enter the tables
+    /// ... and at the start of a main forward (the previous one is over; a batch still copying stays pending, nobody reads its
+    /// slots): the batches whose event is done enter the tables
     void swap_settle() {
         if (swap_q.empty()) return;
         std::vector<char> dirty(hy.size(), 0);
         while (!swap_q.empty()) {
             SwapBatch& b = swap_q.front();
-            if (cudaEventQuery(b.ev) != cudaSuccess) {
+            const cudaError_t qe = cudaEventQuery(b.ev);
+            if (qe == cudaErrorNotReady) {
                 (void) cudaGetLastError();
                 break;
             }
+            CK(qe);
             for (const SwapItem& it : b.items) {
                 Hy& H = hy[(size_t) it.li];
                 const int S = layer_at(it.li).n_slots;
@@ -3217,6 +3220,7 @@ struct Engine {
             }
     }
     /// STRATA_Q36_PF_CHECK=1 (debug): the device slot tables against the host's, and the host's against its slot bookkeeping
+    std::vector<uint8_t> bytes_buf;
     void table_check() {
         CK(cudaStreamSynchronize(st));
         const int64_t ne = m->g.n_expert;
@@ -3235,6 +3239,22 @@ struct Engine {
                 if (bad && ++chk_bad <= 5)
                     std::fprintf(stderr, "strata-q36 table check: state %zu expert %d: host slot %d, device slot %d\n", li, x, hs,
                                  d[(size_t) x]);
+            }
+            // the bytes: a few resident slots per layer (a window that moves every forward) and every prefetch slot in the table
+            // hold their expert's blob
+            const Layer& L = layer_at((int) li);
+            std::vector<int> sample;
+            for (int k = 0; k < 4 && S > 0; ++k) sample.push_back((int) ((chk_calls * 4 + k + (long long) li * 7) % S));
+            for (size_t p = 0; p < H.pf.size(); ++p)
+                if (H.pf[p].state == 2) sample.push_back(S + (int) p);
+            for (int s_ : sample) {
+                const int x = H.exp_in_slot.size() > (size_t) s_ && s_ < S ? H.exp_in_slot[(size_t) s_] : H.pf[(size_t) (s_ - S)].x;
+                if (x < 0 || H.slot_of[(size_t) x] != s_ || (s_ < S && H.pend_s[(size_t) s_])) continue;
+                bytes_buf.resize(L.L.bytes);
+                CK(cudaMemcpy(bytes_buf.data(), (L.blobs + (size_t) s_ * L.stride), L.L.bytes, cudaMemcpyDeviceToHost));
+                ++chk_bytes;
+                if (std::memcmp(bytes_buf.data(), L.hblobs + (size_t) x * L.stride, L.L.bytes) != 0 && ++chk_bytes_bad <= 5)
+                    std::fprintf(stderr, "strata-q36 table check: state %zu slot %d expert %d: the bytes differ from the host copy\n", li, s_, x);
             }
         }
     }
@@ -3320,10 +3340,13 @@ struct Engine {
             if (cache_window && left < before) next = (li + 1) % hy.size();
         }
         if (cache_window) rebalance_cursor = next;
+        // (the tables go up from pageable host memory: the copy is staged before the call returns, so the host may change them
+        // at once; the synchronous swaps' copies are on the stream, the async ones wait for the table upload through a fence)
         if (as) {
             swap_issue();
-        } else
-        CK(cudaStreamSynchronize(st));   // slot_of's host copy is pageable: the upload is done before it changes
+        } else {
+            CK(cudaStreamSynchronize(st));
+        }
         ++rb_calls[kind];
         rb_swaps[kind] += hy_swaps - rb_s0;
         rb_ms[kind] += ms_since(rb_t0);
@@ -4113,6 +4136,12 @@ bool place_experts(Model& m, Engine& E, double vram_gib, int threads, int hybrid
         }
     }
     E.arena_pinned = pinned;
+    if ((E.async_swaps || E.pf_check) && !E.main_hybrid && E.use_graph) {   // (the decode graphs would capture the host-side settle)
+        std::fprintf(stderr, "strata-q36: --async-swaps / STRATA_Q36_PF_CHECK need the main layers hybrid (decode runs as graphs here); off\n");
+        E.async_swaps = false;
+        E.async_mask = 0;
+        E.pf_check = false;
+    }
     if (E.async_swaps && !pinned) {
         std::fprintf(stderr, "strata-q36: --async-swaps needs the pinned expert copy; off\n");
         E.async_swaps = false;
@@ -5391,7 +5420,8 @@ int strata::qwen35::run(int argc, char** argv) {
                 std::fprintf(stderr, "strata-q36: async swaps: %lld copies in %lld batches, %lld taken into the tables, %zu still pending\n",
                              E.hy_swaps, E.sw_batches, E.sw_taken, E.swap_q.size());
             if (E.pf_check)
-                std::fprintf(stderr, "strata-q36: table check: %lld forwards compared, %lld mismatches\n", E.chk_calls, E.chk_bad);
+                std::fprintf(stderr, "strata-q36: table check: %lld forwards compared, %lld table mismatches; %lld slots compared byte for byte, %lld differ\n",
+                             E.chk_calls, E.chk_bad, E.chk_bytes, E.chk_bytes_bad);
             if (E.pf_slots)
                 std::fprintf(stderr, "strata-q36: prefetch: %lld predictions, %lld copies, %lld entries hit a prefetch slot, "
                              "%lld routings found a copy still in flight\n", E.pf_preds, E.pf_copies, E.pf_hits, E.pf_late);
