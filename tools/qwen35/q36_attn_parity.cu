@@ -62,6 +62,7 @@ template<> std::vector<q36attn::q8_cell> store(const std::vector<float>& x, std:
         }
     return s;
 }
+bool use_mma = false;  // the tensor-core kernel (class B): against the oracle at fp16 tolerance, not against part_q8
 bool skip_x = false;   // below sm_80 the launcher never picks part_q8x: no comparison with it
 bool small = false;    // `q36_attn_parity small`: without the 262144-cell cases (sanitizer runs)
 bool q8_own = false;   // the int8 cache through part_q8 (what the engine runs), else part<q8_cell>
@@ -158,7 +159,15 @@ template<class KV> void run(int ctx, int group, int tokens, bool sessions, cudaS
     CK(cudaGetLastError());
     CK(cudaStreamSynchronize(stream));
     if constexpr (q8) {
-        if (q8_own && !skip_x) {
+        if (use_mma) {
+            CK(cudaMemset(acc, 0xFF, parts * D * sizeof(float)));
+            CK(cudaMemset(mx, 0xFF, parts * sizeof(float))); CK(cudaMemset(den, 0xFF, parts * sizeof(float)));
+            q36attn::launch_part_q8m(dq, reinterpret_cast<const KV*>(kp[0]), reinterpret_cast<const KV*>(vp[0]), dp, t0, nt, H, KVH,
+                                     ctx, 1.f / 16, chunks, chunks, acc, mx, den, rows, sessions, stream, 0);
+            CK(cudaGetLastError());
+            CK(cudaStreamSynchronize(stream));
+        }
+        if (q8_own && !skip_x && !use_mma) {
             // part_q8x (the engine's kernel: cache tiles through shared memory, R window rows per block) against part_q8 above:
             // every partial it writes must have the same bits, for each cap on the rows per block; the last launch stays
             // in the buffers for the checks below (the default cap)
@@ -267,13 +276,15 @@ template<class KV> void run(int ctx, int group, int tokens, bool sessions, cudaS
             }
         }
     }
+    if (use_mma) std::printf("  [mma] ");
     std::printf("KV %s ctx%d G%d rows%d offset%d sessions%d: %d values, max error %.9g", name<KV>(), ctx, group, nt, t0,
                 sessions, compared, error);
     if (q8) std::printf(", vs the FP32 values %.9g", ferror);
     std::printf(", merged %.9g", merror);
     if (q8 && k8v4) std::printf(", rotated back %.9g", uerror);
     std::printf("\n");
-    if (error > 2.e-5 || merror > 2.e-5 || uerror > 2.e-5) std::exit(1);
+    const double tol = use_mma ? 4.e-3 : 2.e-5;   // fp16 q, P x d and mma products against the double oracle
+    if (error > tol || merror > tol || uerror > tol) std::exit(1);
     // k8v4 against FP32: the rotated values are ~N(0, 0.58), a q4_0 step is amax / 8 (~0.16 here)
     if (q8 && k8v4 && ferror > 0.1) std::exit(1);
     // int8 against FP32: values in [-1, 1), so a q8_0 step is <= 1/127 and its rounding <= 1/254 per value
@@ -316,5 +327,15 @@ int main(int argc, char** argv) {
     run<q8>(257, 8, 3, false, stream); run<q8>(259, 8, 5, false, stream); run<q8>(261, 8, 7, false, stream);
     run<q8>(264, 8, 8, false, stream); run<q8>(515, 8, 5, false, stream);
     if (!small) run<q8>(262144, 8, 1, false, stream);
+    // the tensor-core kernel (STRATA_Q36_ATTN_MMA=1, class B), int8 cache, 8 query heads per KV head, against the oracle
+    if (major >= 8) {
+        use_mma = true; k8v4 = false;
+        run<q8>(5, 8, 1, false, stream); run<q8>(257, 8, 3, true, stream); run<q8>(4096, 8, 3, false, stream);
+        run<q8>(1000, 8, 8, false, stream); run<q8>(257, 8, 3, false, stream); run<q8>(258, 8, 4, false, stream);
+        run<q8>(259, 8, 5, false, stream); run<q8>(260, 8, 6, false, stream); run<q8>(261, 8, 7, false, stream);
+        run<q8>(264, 8, 8, false, stream); run<q8>(257, 8, 2, false, stream); run<q8>(515, 8, 5, false, stream);
+        if (!small) run<q8>(262144, 8, 1, false, stream);
+        use_mma = false;
+    }
     CK(cudaStreamDestroy(stream)); std::puts("PASS");
 }

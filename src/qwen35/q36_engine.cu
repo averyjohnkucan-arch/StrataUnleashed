@@ -4615,7 +4615,7 @@ int strata::qwen35::run(int argc, char** argv) {
     bool serve_mode = false, graph = true, vision = false, batch_mtp = false;
     // the opt-ins of this engine path (docs/QWEN36.md): off, they leave the default path as it was
     std::string kv = "fp32", tokens_file, expert_profile, expert_profile_save;
-    bool gqa_attn = false, zero_copy = false, snapshot_host = false, fused_pattn = false, chunked_gdn = false, fused_pattn_i8 = false;
+    bool gqa_attn = false, zero_copy = false, snapshot_host = false, fused_pattn = false, chunked_gdn = false, fused_pattn_i8 = false, attn_mma = false;
     int expert_prefetch = 0, decode_swaps = -1, snapshots = 0;
     int64_t snapshot_min = 4096;
     for (int i = 1; i < argc; ++i) {
@@ -4670,6 +4670,7 @@ int strata::qwen35::run(int argc, char** argv) {
         else if (a == "--chunked-gdn") chunked_gdn = true;        // the prompt's gated delta rule in pieces of 16 tokens
         else if (a == "--fused-prompt-attn-i8") fused_pattn = fused_pattn_i8 = true;   // ... with int8 scores (experimental)
         else if (a == "--fused-prompt-attn") fused_pattn = true;   // the prompt attention in one kernel (int8 cache)
+        else if (a == "--attn-mma") attn_mma = true;               // with --kv int8: its tensor-core kernel (sm_80+, not bit-identical)
         else if (a == "--hybrid-zero-copy") zero_copy = true;      // the hybrid hand-off without copies
         else if (a == "--expert-prefetch") expert_prefetch = std::atoi(next().c_str());   // P prefetch slots per layer
         else if (a == "--expert-profile") expert_profile = next();             // the main path's names: the initial slots
@@ -4690,7 +4691,7 @@ int strata::qwen35::run(int argc, char** argv) {
                          "usage: strata-q36 --model GGUF [--max-context 32768] [--chunk 512] [--no-graph]\n"
                          "       (--serve | --tokens IDS | --tokens-file F [--n 64] [--force IDS] [--dump-full-logits F] | "
                          "--bench-pp N --bench-tg N)\n"
-                         "       opt-ins (docs/QWEN36.md): [--kv fp32|fp16|int8|k8v4] [--gqa-attn] [--fused-prompt-attn[-i8]] [--chunked-gdn] [--mtp-sampled off|match|q]\n"
+                         "       opt-ins (docs/QWEN36.md): [--kv fp32|fp16|int8|k8v4] [--gqa-attn] [--attn-mma] [--fused-prompt-attn[-i8]] [--chunked-gdn] [--mtp-sampled off|match|q]\n"
                          "       [--spec-min-p P] [--snapshots K] [--snapshot-min N] [--snapshot-host] [--expert-profile F] [--expert-profile-save F]\n"
                          "       [--expert-prefetch P] [--hybrid-zero-copy] [--decode-swaps N]\n");
             return 2;
@@ -4741,6 +4742,7 @@ int strata::qwen35::run(int argc, char** argv) {
     E.fused_pattn = fused_pattn;
     E.fused_pattn_i8 = fused_pattn_i8;
     E.chunked_gdn = chunked_gdn;
+    if (attn_mma) q36attn::mma_enabled() = true;
     if (decode_swaps >= 0) E.decode_swaps = decode_swaps;
     E.zc = zero_copy;
     E.pf_want = expert_prefetch;

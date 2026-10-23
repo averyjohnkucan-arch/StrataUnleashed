@@ -273,6 +273,14 @@ on the `strata-q36` command line.
   1.20e-2, median 2.0e-3, p99 0.078, max 0.97 (the 14K prompt: mean 2.3e-2, max 0.97, top-1 58 of 65 steps; the controls are
   `--prefill 1024` with mean 8.9e-3 and max 0.51, and the accepted prefetch opt-ins with mean 2.2e-2 and max 1.95). Chunks of 9-33
   rows are a few microseconds per layer slower than the default kernel. Measured on a Core Ultra 9 285K with 61 GB DDR5-6800.
+- **`--attn-mma`** (with `--gqa-attn --kv int8`, sm_80+; `STRATA_Q36_ATTN_MMA=1` does the same): the decode attention on tensor cores
+  (`part_q8m`): the window's query rows (8 per row) against the int8 cells as fp16 `mma.sync` products with fp32 accumulation, the cache
+  read once per window. **Not bit-identical** to the default kernel: q, the softmax weights times the V scale, and the products are
+  rounded to fp16 (about 1e-4 relative), K and V enter as their exact int8 values. A row's result does not depend on the other rows of
+  its window, so `--mtp` text equals the plain text. KL against the default kernel over the 14K / 57K / 76K set (65 forced steps each,
+  Sage, RTX 5080): mean 5.7e-3, median 1.1e-3, p99 0.033, max 0.36 (the `--prefill 1024` floor: 8.9e-3, 1.3e-3, 0.09, 0.51).
+  Microbench of the partial kernel for one layer (int8, 16 / 2 heads, L2 flushed): 262K cells 1 row 331 us (the int8 kernel above: 361),
+  a 3-row window 425 us (925), 4 rows 461 us (1,200); 32K cells, 3 rows 76 us (157).
 - **`--mtp-sampled match | q`** (with `--mtp N`): sampled requests draft with the MTP block too (without it only greedy ones do).
   `match` drafts the block's greedy pick and keeps each window row's token as a plain decode step samples it, so a fixed seed gives the
   same text as without drafts (until a near tie falls the other way in the last bits); `q` samples the drafts from the block's own
