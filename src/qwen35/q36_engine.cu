@@ -1389,6 +1389,7 @@ struct Engine {
         std::vector<Snap> snaps;            // snapshots of its first snaps[k].len held tokens (len 0: none)
     };
     int n_snaps = 0;                        // snapshots per session (--snapshots, 0: off)
+    bool snap_host = false;                 // --snapshot-host: the snapshots in pinned host memory (copies over PCIe), not in VRAM
     int64_t snap_min = 4096;                // taken after reads of prompts at least this long (--snapshot-min)
     std::vector<Sess> sess;
     int n_sess = 1, cur = 0;
@@ -1573,12 +1574,20 @@ struct Engine {
         }
         ss.hlast = dalloc((size_t) g.n_embd);
         ss.snaps.resize((size_t) n_snaps);
+        // (--snapshot-host: pinned host memory, one block per snapshot; the copies below use cudaMemcpyDefault)
+        auto snap_alloc = [&](size_t n) -> float* {
+            if (!snap_host) return dalloc(n);
+            float* p = nullptr;
+            CK(cudaHostAlloc((void**) &p, n * 4, cudaHostAllocDefault));
+            std::memset(p, 0, n * 4);
+            return p;
+        };
         for (Snap& sn : ss.snaps) {         // allocated with the session: before the experts take the rest of the VRAM
             for (const Layer& L : m->layers) {
-                sn.conv.push_back(L.attn ? nullptr : dalloc(C * (g.ssm_d_conv - 1)));
-                sn.S.push_back(L.attn ? nullptr : dalloc((size_t) g.ssm_v_heads * g.ssm_state_size * g.ssm_state_size));
+                sn.conv.push_back(L.attn ? nullptr : snap_alloc(C * (g.ssm_d_conv - 1)));
+                sn.S.push_back(L.attn ? nullptr : snap_alloc((size_t) g.ssm_v_heads * g.ssm_state_size * g.ssm_state_size));
             }
-            sn.hlast = dalloc((size_t) g.n_embd);
+            sn.hlast = snap_alloc((size_t) g.n_embd);
         }
     }
     /// The bytes of one snapshot (the DeltaNet layers' conv and S state, hlast).
@@ -1608,11 +1617,11 @@ struct Engine {
         for (size_t l = 0; l < conv.size() && l < d->conv.size(); ++l) {
             if (!d->conv[l]) continue;
             CK(cudaMemcpyAsync(d->conv[l], conv[l], (size_t) g.ssm_conv_channels * (g.ssm_d_conv - 1) * 4,
-                               cudaMemcpyDeviceToDevice, st));
+                               cudaMemcpyDefault, st));
             CK(cudaMemcpyAsync(d->S[l], S[l], (size_t) g.ssm_v_heads * g.ssm_state_size * g.ssm_state_size * 4,
-                               cudaMemcpyDeviceToDevice, st));
+                               cudaMemcpyDefault, st));
         }
-        CK(cudaMemcpyAsync(d->hlast, hlast, (size_t) g.n_embd * 4, cudaMemcpyDeviceToDevice, st));
+        CK(cudaMemcpyAsync(d->hlast, hlast, (size_t) g.n_embd * 4, cudaMemcpyDefault, st));
         CK(cudaStreamSynchronize(st));
         d->len = pos;
         d->rdelta = ss.rdelta;
@@ -1633,9 +1642,9 @@ struct Engine {
         for (size_t l = 0; l < b.conv.size(); ++l) {   // (the MTP block's index, past the layers, has a cache only)
             if (l < sn.conv.size() && sn.conv[l]) {
                 CK(cudaMemcpyAsync(b.conv[l], sn.conv[l], (size_t) g.ssm_conv_channels * (g.ssm_d_conv - 1) * 4,
-                                   cudaMemcpyDeviceToDevice, st));
+                                   cudaMemcpyDefault, st));
                 CK(cudaMemcpyAsync(b.S[l], sn.S[l], (size_t) g.ssm_v_heads * g.ssm_state_size * g.ssm_state_size * 4,
-                                   cudaMemcpyDeviceToDevice, st));
+                                   cudaMemcpyDefault, st));
             }
             if (src != dst && a.kc[l]) {
                 CK(cudaMemcpy2DAsync(b.kc[l], row, a.kc[l], row, (size_t) len * cb, (size_t) g.n_head_kv,
@@ -1644,7 +1653,7 @@ struct Engine {
                                      cudaMemcpyDeviceToDevice, st));
             }
         }
-        CK(cudaMemcpyAsync(b.hlast, sn.hlast, (size_t) g.n_embd * 4, cudaMemcpyDeviceToDevice, st));
+        CK(cudaMemcpyAsync(b.hlast, sn.hlast, (size_t) g.n_embd * 4, cudaMemcpyDefault, st));
         CK(cudaStreamSynchronize(st));
         b.rdelta = sn.rdelta;
         b.imgs = sn.imgs;
@@ -1823,7 +1832,7 @@ struct Engine {
             for (const Layer& L : m->layers) (L.attn ? n_attn : n_gdn) += 1;
             const size_t per = (size_t) g.n_head_kv * (kv_cell() + kv_cell_v()) * (size_t) ctx * n_attn +
                                (size_t) g.ssm_v_heads * g.ssm_state_size * g.ssm_state_size * 4 * n_gdn +
-                               (size_t) n_snaps * snap_bytes();
+                               (snap_host ? 0 : (size_t) n_snaps * snap_bytes());
             size_t fr0 = 0, tot0 = 0;
             CK(cudaMemGetInfo(&fr0, &tot0));
             if (n_sess > 1)
@@ -1839,9 +1848,10 @@ struct Engine {
         }
         for (Sess& ss : sess) alloc_session(ss);
         if (n_snaps > 0)
-            std::fprintf(stderr, "strata-q36: recurrent-state snapshots: %d per session, %.1f MiB each (%.1f MiB in all), "
+            std::fprintf(stderr, "strata-q36: recurrent-state snapshots: %d per session, %.1f MiB each (%.1f MiB in all, in %s), "
                          "taken after prompt reads of %lld tokens or more\n", n_snaps, (double) snap_bytes() / (1 << 20),
-                         (double) snap_bytes() * n_snaps * n_sess / (1 << 20), (long long) snap_min);
+                         (double) snap_bytes() * n_snaps * n_sess / (1 << 20), snap_host ? "pinned host memory" : "VRAM",
+                         (long long) snap_min);
         if (n_sess > 1) {   // the batch rows' tables: per state index the session pointers, on the device
             const size_t ns = sess[0].conv.size();
             std::vector<float*> hc(ns * (size_t) n_sess), hs(hc), hk(hc), hv(hc);
@@ -4538,7 +4548,7 @@ int strata::qwen35::run(int argc, char** argv) {
     bool serve_mode = false, graph = true, vision = false, batch_mtp = false;
     // the opt-ins of this engine path (docs/QWEN36.md): off, they leave the default path as it was
     std::string kv = "fp32", tokens_file, expert_profile, expert_profile_save;
-    bool gqa_attn = false, zero_copy = false;
+    bool gqa_attn = false, zero_copy = false, snapshot_host = false;
     int expert_prefetch = 0, decode_swaps = -1, snapshots = 0;
     int64_t snapshot_min = 4096;
     for (int i = 1; i < argc; ++i) {
@@ -4597,6 +4607,7 @@ int strata::qwen35::run(int argc, char** argv) {
         else if (a == "--decode-swaps") decode_swaps = std::atoi(next().c_str());   // the hybrid slots' swaps per 32 tokens
         else if (a == "--snapshots") snapshots = std::atoi(next().c_str());       // recurrent-state snapshots per session
         else if (a == "--snapshot-min") snapshot_min = std::atoll(next().c_str());
+        else if (a == "--snapshot-host") snapshot_host = true;   // the snapshots in pinned host memory: more expert slots
         else if (serve_mode && a.rfind("--", 0) == 0) {
             // serve passes the config's args plus a few of its own: one this engine does not have is said and skipped
             // (with its value), not fatal
@@ -4610,7 +4621,7 @@ int strata::qwen35::run(int argc, char** argv) {
                          "       (--serve | --tokens IDS | --tokens-file F [--n 64] [--force IDS] [--dump-full-logits F] | "
                          "--bench-pp N --bench-tg N)\n"
                          "       opt-ins (docs/QWEN36.md): [--kv fp32|fp16|int8|k8v4] [--gqa-attn] [--mtp-sampled off|match|q]\n"
-                         "       [--spec-min-p P] [--snapshots K] [--snapshot-min N] [--expert-profile F] [--expert-profile-save F]\n"
+                         "       [--spec-min-p P] [--snapshots K] [--snapshot-min N] [--snapshot-host] [--expert-profile F] [--expert-profile-save F]\n"
                          "       [--expert-prefetch P] [--hybrid-zero-copy] [--decode-swaps N]\n");
             return 2;
         }
@@ -4666,6 +4677,7 @@ int strata::qwen35::run(int argc, char** argv) {
     // tokens or more (4096); STRATA_Q36_SNAPSHOT_TEST=L[,J] checks one (a test setting, see below)
     E.n_snaps = std::max(0, std::min(4, snapshots));
     E.snap_min = std::max<int64_t>(1, snapshot_min);
+    E.snap_host = snapshot_host;
     const char* snap_test = std::getenv("STRATA_Q36_SNAPSHOT_TEST");
     if (snap_test && !serve_mode) E.n_snaps = std::max(E.n_snaps, 1);
     if (chunk == 0) {

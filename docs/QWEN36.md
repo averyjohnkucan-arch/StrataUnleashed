@@ -63,6 +63,9 @@ on an RTX 5080 with DDR5-6400 dual channel, two long agent sessions with a Qwen3
 - `--snapshots 2` in the config's `args` keeps two copies of the recurrent state per session (62.8 MiB each for Qwen3.6-35B-A3B),
   taken at the end of reading a prompt of 4,096 tokens or more (`--snapshot-min N`): a prompt that parts from the held tokens after
   one restores it and reads only the rest.
+- `--snapshot-host` (with `--snapshots K`) keeps the snapshots in pinned host memory instead of VRAM: the card holds 126 MiB less
+  at K = 2 (about 1.7 more expert slots per layer), a snapshot is a 63 MiB copy to the host (a few ms) and a restore a copy
+  back. The restored state is the same bytes.
 
 `STRATA_REUSE_DIAG=1` (off by default: it logs a few of the conversation's tokens) makes the engine log the token where a prompt parts
 from a session's held tokens, and the server say it in text.
@@ -222,6 +225,7 @@ on the `strata-q36` command line.
   the block's top probability, which keeps the rule exact). `q` needs `top_k` <= 64 and a temperature above 0 and at least
   `STRATA_SPEC_MIN_TEMP`; other sampled requests use `match`. With `--draft-vocab N` the drafts come from the first N ids, and the
   penalties apply to the ids the draft row has.
+- **`--snapshot-host`**: the snapshots of `--snapshots K` in pinned host memory (see below).
 - **`--snapshots K`**, **`--snapshot-min N`**: see "A conversation that parts from the held tokens" (K up to 4).
 - **`--expert-profile F`**, **`--expert-profile-save F`** (the main path's names and file format, `tools/make_profile.py`): in the
   hybrid mode each layer's first expert slots take its most-routed experts from F instead of experts 0 .. S - 1, and at the engine's
