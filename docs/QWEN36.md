@@ -317,6 +317,18 @@ on the `strata-q36` command line.
   the new expert enters the tables only once its copy has landed (checked at the start of the next forward), so no slot is read before its
   bytes arrived. `--async-swaps` takes the decode ones, `--async-after-prompt` the after-prompt ones too (see "Slot swaps" below). They need
   the pinned expert copy.
+- **`--draft-vocab N`** (multiple of 8) and **`--draft-ctx E`** (env `STRATA_Q36_DRAFT_VOCAB`, `STRATA_Q36_DRAFT_CTX`): the MTP draft head
+  scores the first N token ids plus up to E ids taken from the last 8,192 tokens of the conversation (refreshed every 32 tokens), instead
+  of all 248,320 rows. On a Q8_0 output matrix only the first N rows are scored (no E); on a Q6_K one (Sage's) the first N rows are read in
+  place and the context ids' rows are gathered into a small buffer (E x 1,680 bytes), both by the stock Q6_K kernel; E needs the hybrid mode
+  (the draft step is not a graph there). A draft only proposes, the verify window decides, so the answer does not change except through the
+  last-bit differences a different window brings (the same as `--spec-min-p`'s); with `--mtp-sampled q`, q is the chain over the scored ids
+  and the rule stays exact (`q36_sampling_test`: a draft list of ids 0-3, 6, 7 gives the target's joint). Measured (RTX 5080, Core Ultra 9
+  285K, Sage Q4_K_M ssmbf16, `--mtp 2 --spec-min-p 0.5`, greedy, no prefetch, 262K context reserved, agent prompts, 256 tokens): 4K prompt
+  243 -> 262 tok/s with `--draft-vocab 16384 --draft-ctx 4096` (+7.8%), 40K prompt 212 -> 228 (+7.3%); acceptance 86% -> 89% and 79% -> 79%.
+  The cost is on other scripts: 12 short prompts in 12 languages, 248 -> 231 tok/s with the same flags (-7%; with `--draft-vocab 32768`
+  237, -4%): Chinese 251 -> 227, Arabic 257 -> 196, Korean 254 -> 215, Russian 264 -> 226, Hindi 272 -> 262; English 254 -> 265,
+  German 266 -> 268, code 176 -> 182, math 244 -> 243.
 - **`--snapshots K`**, **`--snapshot-min N`**: see "A conversation that parts from the held tokens" (K up to 4).
 - **`--expert-profile F`**, **`--expert-profile-save F`** (the main path's names and file format, `tools/make_profile.py`): in the
   hybrid mode each layer's first expert slots take its most-routed experts from F instead of experts 0 .. S - 1, and at the engine's

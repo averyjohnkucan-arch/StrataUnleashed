@@ -67,6 +67,7 @@ std::vector<int32_t> plain(const Sampling& s, unsigned long long seed) {
 }
 
 enum class Control { none, wrong_q, blind_rows, gate_pick };
+std::vector<int> g_sub_ids;   // spec(): the draft head scores only these ids (--draft-ctx: a list of (id, logit), not a row by id)
 bool g_cand = false;   // spec(): rows and draft rows as shuffled shortlists (judge_c, draft_c)
 std::mt19937_64 g_shuf(5);
 Cand as_cand(const std::vector<float>& row) {   // the whole row, in a random order (K == the row's width)
@@ -102,7 +103,12 @@ std::vector<int32_t> spec(const Sampling& s, unsigned long long seed, SpecRule r
             row.resize((size_t) g_draft_v);
             float pr;
             if (rule == SpecRule::q) {
-                if (g_cand) {
+                if (!g_sub_ids.empty()) {
+                    Cand cd;
+                    const std::vector<float> full = drafter(h);
+                    for (int id : g_sub_ids) { cd.id.push_back(id); cd.v.push_back(full[(size_t) id]); }
+                    drafts[(size_t) d] = sj.draft_c(d, drafts.data(), cd, cd.id.size(), &pr);
+                } else if (g_cand) {
                     Cand cd = as_cand(row);
                     drafts[(size_t) d] = sj.draft_c(d, drafts.data(), cd, row.size(), &pr);
                 } else {
@@ -385,6 +391,14 @@ int main() {
     dist_case("q, card sampling, D=2, draft vocab 6 of 8", card, SpecRule::q, 2, Control::none, n, true);
     dist_case("match, card sampling, D=2, draft vocab 6 of 8", card, SpecRule::match, 2, Control::none, n, true);
     g_draft_v = V;
+    // 4b. --draft-ctx: the draft head scores a list of ids (0-3, 6, 7: no mass on 4 and 5); q over that list is a valid q
+    g_sub_ids = {0, 1, 2, 3, 6, 7};
+    dist_case("q, card sampling, D=2, draft list ids 0-3,6,7", card, SpecRule::q, 2, Control::none, n, true);
+    dist_case("q, cold sampling, D=3, draft list ids 0-3,6,7", cold, SpecRule::q, 3, Control::none, n, true);
+    g_min_p = 0.5f;
+    dist_case("q, card sampling, D=3, min_p 0.5, draft list", card, SpecRule::q, 3, Control::none, n, true);
+    g_min_p = 0.f;
+    g_sub_ids.clear();
 
     // 5. --sample-gpu's shortlist
     shortlist_case();

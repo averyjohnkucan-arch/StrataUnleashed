@@ -795,6 +795,14 @@ __global__ void __launch_bounds__(1024) k_cand_merge(const Cand2* __restrict__ p
     for (int j = threadIdx.x; j < K; j += blockDim.x) out[(size_t) blockIdx.x * K + j] = in[sidx[j]];
 }
 
+/// --draft-ctx: dst row j = src row ids[j] (rows of `row_bytes`, a multiple of 16): the context ids' rows of the output matrix
+__global__ void k_gather_rows(const uint8_t* __restrict__ src, const int32_t* __restrict__ ids, uint8_t* __restrict__ dst,
+                              size_t row_bytes) {
+    const int4* s4 = reinterpret_cast<const int4*>(src + (size_t) ids[blockIdx.x] * row_bytes);
+    int4* d4 = reinterpret_cast<int4*>(dst + (size_t) blockIdx.x * row_bytes);
+    for (size_t i = threadIdx.x; i < row_bytes / 16; i += blockDim.x) d4[i] = s4[i];
+}
+
 unsigned grid1(int64_t n, int b = kThreads) { return (unsigned) ((n + b - 1) / b); }
 
 /// out[t][o] = W[o] . x[t] in FP32 for a prompt chunk's small F32 projections (the router, the GDN alpha / beta,
@@ -2814,6 +2822,16 @@ struct Engine {
             if (spec_min_p > 0.f) k_pick_prob<<<1, 1024, 0, st>>>(logits_m, (int) g.n_vocab, pick_m, prob_m);
             return;
         }
+        if (draft_q6()) {   // the Q6_K output matrix: the first draft_n rows in place, the context ids' rows gathered
+            const int nc = draft_cols();
+            quant(hn, N, 1, q8);
+            K::native_mmvq(hd.type, hd.d, q8, logits_m, hd.n_in, draft_n, 1, st);
+            if (draft_ext_n > 0) K::native_mmvq(hd.type, d_ext_w, q8, logits_m + draft_n, hd.n_in, draft_ext_n, 1, st);
+            k_argmax<<<dim3(kArgBlocks, 1), kThreads, 0, st>>>(logits_m, nc, pick_m, amv, ami, false);
+            k_argmax<<<dim3(1, 1), kThreads, 0, st>>>(logits_m, kArgBlocks, pick_m, amv, ami, true);
+            if (spec_min_p > 0.f) k_pick_prob<<<1, 1024, 0, st>>>(logits_m, nc, pick_m, prob_m);
+            return;
+        }
         quant(hn, N, 1, q8);
         const uint8_t* pk = nullptr;
         for (const auto& p : m->packed)
@@ -3825,7 +3843,62 @@ struct Engine {
         const Mat& hd = m->head;
         const bool sub = fast_k && draft_n > 0 && draft_n < g.n_vocab && draft_n % 8 == 0 && hd.type == 8 &&
                          hd.n_in == g.n_embd && g.n_embd / 32 == 64;
-        return sub ? draft_n : (int) g.n_vocab;
+        if (sub) return draft_n;
+        // a Q6_K head (Sage's): the first draft_n rows, then the rows of the context's ids (--draft-ctx)
+        if (draft_q6()) return draft_n + draft_ext_n;
+        return (int) g.n_vocab;
+    }
+    /// --draft-vocab on a Q6_K head: the draft head's columns are the first draft_n ids and draft_ext_n context ids
+    bool draft_q6() const {
+        const Mat& hd = m->head;
+        return draft_n > 0 && draft_n < m->g.n_vocab && draft_n % 8 == 0 && hd.type == 14 && hd.n_in % 256 == 0 &&
+               hd.n_in == m->g.n_embd;
+    }
+    int draft_ext_max = 0, draft_ext_n = 0;            // --draft-ctx E: at most E context ids; the number now
+    uint8_t* d_ext_w = nullptr;                        // their rows of the output matrix, gathered [draft_ext_max][row]
+    int32_t *d_ext_ids = nullptr, *h_ext_pin = nullptr;
+    std::vector<int32_t> ext_ids;                      // the ids of columns draft_n .. draft_n + draft_ext_n - 1
+    std::vector<uint8_t> ext_seen;
+    long long ext_refreshes = 0;
+    /// the token id of draft column j
+    int draft_id(int j) const { return j < draft_n || !draft_q6() ? j : ext_ids[(size_t) (j - draft_n)]; }
+    void draft_ext_init() {
+        if (draft_ext_max <= 0) return;
+        if (!draft_q6()) {
+            std::fprintf(stderr, "strata-q36: --draft-ctx needs --draft-vocab N (a multiple of 8) on a Q6_K output matrix: ignored\n");
+            draft_ext_max = 0;
+            return;
+        }
+        if (mtp_graph) {   // the draft step's graph holds the column count
+            std::fprintf(stderr, "strata-q36: --draft-ctx needs the hybrid mode (the draft step is not a graph there): ignored\n");
+            draft_ext_max = 0;
+            return;
+        }
+        const size_t rb = (size_t) (m->head.n_in / 256) * 210;
+        d_ext_w = dalloc_t<uint8_t>((size_t) draft_ext_max * rb);
+        d_ext_ids = dalloc_t<int32_t>((size_t) draft_ext_max);
+        CK(cudaHostAlloc((void**) &h_ext_pin, (size_t) draft_ext_max * 4, cudaHostAllocDefault));
+        ext_seen.assign((size_t) m->g.n_vocab, 0);
+    }
+    /// The context ids' columns from the last 8192 tokens of hist: the distinct ids of draft_n and above, the latest first.
+    void draft_refresh(const std::vector<int32_t>& hist) {
+        if (draft_ext_max <= 0) return;
+        ext_ids.clear();
+        const size_t from = hist.size() > 8192 ? hist.size() - 8192 : 0;
+        for (size_t i = hist.size(); i > from && (int) ext_ids.size() < draft_ext_max; --i) {
+            const int32_t t = hist[i - 1];
+            if (t < draft_n || (size_t) t >= ext_seen.size() || ext_seen[(size_t) t]) continue;
+            ext_seen[(size_t) t] = 1;
+            ext_ids.push_back(t);
+        }
+        for (int32_t t : ext_ids) ext_seen[(size_t) t] = 0;
+        CK(cudaStreamSynchronize(st));   // (h_ext_pin may still be a copy's source)
+        draft_ext_n = (int) ext_ids.size();
+        ++ext_refreshes;
+        if (draft_ext_n == 0) return;
+        std::memcpy(h_ext_pin, ext_ids.data(), ext_ids.size() * 4);
+        CK(cudaMemcpyAsync(d_ext_ids, h_ext_pin, ext_ids.size() * 4, cudaMemcpyHostToDevice, st));
+        k_gather_rows<<<draft_ext_n, 128, 0, st>>>(m->head.d, d_ext_ids, d_ext_w, (size_t) (m->head.n_in / 256) * 210);
     }
     /// draft d after its MTP call (pick_m and, with --spec-min-p, prob_m on the device): the block's pick, or sp's
     /// choice; *prob its probability (1 without the gate)
@@ -3838,6 +3911,7 @@ struct Engine {
                 cand_fetch(logits_m, n, n, 1, K);
                 sampling::Cand cd;
                 cand_row(0, cd);
+                if (draft_ext_n > 0) for (int32_t& id : cd.id) id = draft_id(id);   // (columns to token ids)
                 const int32_t r = sp->draft_c(d, drafts.data(), cd, (size_t) n, prob);
                 if (smp_prof) smp_ms += ms_since(t0);
                 return r;
@@ -3848,11 +3922,20 @@ struct Engine {
         CK(cudaStreamSynchronize(st));
         *prob = 1.f;
         if (spec_min_p > 0.f) std::memcpy(prob, hpin + 12, 4);
-        if (sp == nullptr || !sp->draft) return hpin[2];
+        if (sp == nullptr || !sp->draft) return draft_id(hpin[2]);
         const auto t0 = Clock::now();
         lg_draft.resize((size_t) draft_cols());
         CK(cudaMemcpyAsync(lg_draft.data(), logits_m, lg_draft.size() * 4, cudaMemcpyDeviceToHost, st));
         CK(cudaStreamSynchronize(st));
+        if (draft_ext_n > 0 && sp->draft_c) {   // columns past draft_n are context ids: a list of (id, logit), not a row by id
+            sampling::Cand cd;
+            cd.id.resize(lg_draft.size());
+            cd.v = lg_draft;
+            for (size_t j = 0; j < cd.id.size(); ++j) cd.id[j] = draft_id((int) j);
+            const int32_t r = sp->draft_c(d, drafts.data(), cd, lg_draft.size(), prob);
+            if (smp_prof) smp_ms += ms_since(t0);
+            return r;
+        }
         const int32_t r = sp->draft(d, drafts.data(), lg_draft.data(), (int) lg_draft.size(), prob);
         if (smp_prof) smp_ms += ms_since(t0);
         return r;
@@ -5136,6 +5219,8 @@ struct Serve {
             ssp.judge = [&](int D, const std::vector<int32_t>& dr, int32_t* pk) {
                 return sj.judge([&](int r, std::vector<float>& row) { E.host_logits_row(r, row); }, D, dr, pk);
             };
+        if (rule == SpecRule::q)   // (a draft head with context ids hands a list of (id, logit); a row otherwise)
+            ssp.draft_c = [&](int d, const int32_t* prev, Cand& cd, size_t n, float* prob) { return sj.draft_c(d, prev, cd, n, prob); };
         if (E.sample_gpu && rule != SpecRule::off) {   // the same over shortlists (the engine falls back per row set: K == 0)
             ssp.kwindow = [&](const std::vector<int32_t>& dr) { return sj.window_k(dr, n_vocab); };
             ssp.judge_c = [&](int D, const std::vector<int32_t>& dr, int32_t* pk) {
@@ -5143,9 +5228,6 @@ struct Serve {
             };
             if (rule == SpecRule::q) {
                 ssp.kdraft = [&](int d, const int32_t* prev) { return sj.draft_k(d, prev, (size_t) E.draft_cols()); };
-                ssp.draft_c = [&](int d, const int32_t* prev, Cand& cd, size_t n, float* prob) {
-                    return sj.draft_c(d, prev, cd, n, prob);
-                };
             }
         }
         bool decided = false;   // nx is a sampled speculative step's pick (the logits on the device are not its row's)
@@ -5183,6 +5265,7 @@ struct Serve {
         for (;;) {
             if (smp.needs_logits() && !decided) nx = sample_next();
             decided = false;
+            if (spec && E.draft_ext_max > 0 && (produced % 32 == 0)) E.draft_refresh(hist);   // (the context's ids, per 32 tokens)
             auto emit = [&](int t) {   // false: the answer ends here
                 std::printf("T %d\n", t);
                 std::fflush(stdout);
@@ -5304,6 +5387,7 @@ int strata::qwen35::run(int argc, char** argv) {
     bool warm = true;
     int expert_slots = 0, batch = 0, draft_vocab = -1, mtp_sampled = 0;
     bool sample_gpu = false, random_seed = false;
+    int draft_ctx = 0;
     float spec_min_p = 0.f;
     bool serve_mode = false, graph = true, vision = false, batch_mtp = false;
     // the opt-ins of this engine path (docs/QWEN36.md): off, they leave the default path as it was
@@ -5353,6 +5437,7 @@ int strata::qwen35::run(int argc, char** argv) {
         else if (a == "--sample-gpu") sample_gpu = true;       // sampled rows come to the host as GPU shortlists (K highest logits)
         else if (a == "--random-seed") random_seed = true;     // a sampled request without a seed gets a fresh one
         else if (a == "--spec-min-p") spec_min_p = (float) std::atof(next().c_str());   // the main path's name: the gate
+        else if (a == "--draft-ctx") draft_ctx = std::atoi(next().c_str());       // + the MTP drafts' columns of the context's ids
         else if (a == "--draft-vocab") draft_vocab = std::atoi(next().c_str());   // the MTP drafts pick among the first N token ids
         else if (a == "--vision") vision = true;                                  // pictures (GENI): the encoder is strata-vision's
         else if (a == "--batch" || a == "--slots") batch = std::atoi(next().c_str());   // sessions decoding together
@@ -5408,7 +5493,7 @@ int strata::qwen35::run(int argc, char** argv) {
                          "       opt-ins (docs/QWEN36.md): [--kv fp32|fp16|int8|k8v4] [--gqa-attn] [--attn-mma] [--fused-prompt-attn[-i8]] [--chunked-gdn] [--mtp-sampled off|match|q]\n"
                          "       [--spec-min-p P] [--snapshots K] [--snapshot-min N] [--snapshot-host] [--async-swaps]\n"
                          "       [--async-after-prompt] [--lend-staging | --no-lend-staging] [--expert-profile F] [--expert-profile-save F]\n"
-                         "       [--expert-prefetch P] [--prefetch-copies 0|1] [--pool-warm K | --no-pool-warm] [--hybrid-zero-copy] [--decode-swaps N] [--sample-gpu] [--random-seed]\n");
+                         "       [--expert-prefetch P] [--prefetch-copies 0|1] [--pool-warm K | --no-pool-warm] [--hybrid-zero-copy] [--decode-swaps N] [--sample-gpu] [--random-seed]\n       [--draft-vocab N [--draft-ctx E]]\n");
             return 2;
         }
     }
@@ -5630,6 +5715,9 @@ int strata::qwen35::run(int argc, char** argv) {
     E.spec_min_p = std::clamp(spec_min_p, 0.f, 1.f);   // (before the warm-up: the draft step's graph holds the gate's kernel)
     if (draft_vocab < 0 && std::getenv("STRATA_Q36_DRAFT_VOCAB") != nullptr) draft_vocab = std::atoi(std::getenv("STRATA_Q36_DRAFT_VOCAB"));
     E.draft_n = std::max(0, draft_vocab);
+    if (draft_ctx == 0 && std::getenv("STRATA_Q36_DRAFT_CTX") != nullptr) draft_ctx = std::atoi(std::getenv("STRATA_Q36_DRAFT_CTX"));
+    E.draft_ext_max = std::clamp(draft_ctx, 0, 8192);
+    E.draft_ext_init();
     E.bmtp = (batch_mtp || (std::getenv("STRATA_BATCH_MTP") != nullptr && std::string(std::getenv("STRATA_BATCH_MTP")) != "0")) && E.n_sess > 1 && E.mtp_d > 0;
     if (batch_mtp && !E.bmtp) std::fprintf(stderr, "strata-q36: --batch-mtp needs --batch N (2 or more) and --mtp N: ignored\n");
     if (warm) E.warmup();
@@ -5723,9 +5811,14 @@ int strata::qwen35::run(int argc, char** argv) {
         std::vector<int32_t> fix, drafts;
         int32_t picks[16];
         int nx = E.greedy();
+        std::vector<int32_t> chist = prompt;
         while ((int) gen.size() < n_gen) {
             gen.push_back(nx);
             if ((int) gen.size() >= n_gen) break;
+            if (E.draft_ext_max > 0 && (gen.size() - 1) % 32 == 0) {
+                chist.insert(chist.end(), gen.begin() + (long) (chist.size() - prompt.size()), gen.end());
+                E.draft_refresh(chist);
+            }
             const int a = E.spec_step(nx, fix, E.mtp_d, drafts, picks);
             offered += E.spec_min_p > 0.f ? E.last_d : E.mtp_d;
             accepted += a;
