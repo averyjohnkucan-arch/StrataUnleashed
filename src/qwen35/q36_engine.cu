@@ -34,6 +34,7 @@
 #include "q36_kernels.cuh"
 #include "q36_attn.cuh"
 #include "q36_pattn.cuh"
+#include "q36_gdn.cuh"
 #include "q36_sampling.hpp"
 #if defined(STRATA_Q36_CPU_POOL)
 #include "strata/kernels/cpu/native_expert.hpp"
@@ -1345,6 +1346,9 @@ struct Engine {
     bool fused_pattn = false;
     float *pa_acc = nullptr, *pa_m = nullptr, *pa_l = nullptr;
     int n_sm = 0;
+    // --chunked-gdn (opt-in): the prompt's gated delta rule in pieces of 16 tokens (q36_gdn.cuh), its L / P matrices and cumulative gates here
+    bool chunked_gdn = false;
+    float *gdn_L = nullptr, *gdn_P = nullptr, *gdn_cum = nullptr;
     // the prompt's MMQ experts
     bool use_mmq = false;
     std::unique_ptr<MMQ::Context> mctx;
@@ -1759,6 +1763,22 @@ struct Engine {
         if (!fused_pattn) att_s = dalloc(kAttScoreFloats);
         sk_part = dalloc((size_t) kSplitK * T * (g.n_expert + 1));
         if (!fused_pattn) att_p16 = dalloc_t<__half>(kAttScoreFloats);
+        if (chunked_gdn) {
+            if (g.ssm_state_size != 128 || g.ssm_v_heads % g.ssm_k_heads != 0) {
+                std::fprintf(stderr, "strata-q36: --chunked-gdn is built for 128 x 128 states: ignored\n");
+                chunked_gdn = false;
+            }
+#if defined(__HIPCC__)
+            chunked_gdn = false;   // (the kernels are CUDA only)
+#endif
+        }
+        if (chunked_gdn) {
+            gdn_L = dalloc(q36gdn::mat_floats((int) T, (int) g.ssm_v_heads));
+            gdn_P = dalloc(q36gdn::mat_floats((int) T, (int) g.ssm_v_heads));
+            gdn_cum = dalloc(q36gdn::cum_floats((int) T, (int) g.ssm_v_heads));
+            std::fprintf(stderr, "strata-q36: chunked gated delta rule for prompt chunks (%.1f MiB of piece matrices)\n",
+                         (double) ((2 * q36gdn::mat_floats((int) T, (int) g.ssm_v_heads) + q36gdn::cum_floats((int) T, (int) g.ssm_v_heads)) * 4) / (1 << 20));
+        }
         if (fused_pattn) {
             int dev = 0;
             CK(cudaGetDevice(&dev));
@@ -2341,6 +2361,9 @@ struct Engine {
                 const int tiles = (fast_k && T > kGemmT && !verify) ? (T + kConvTile - 1) / kConvTile : 1;
                 k_conv_seq<<<dim3(C / 128, tiles), 128, 0, st>>>(conv[li], qkv_b, L.conv, hc_b, C, 2 * HK, m->eps, T, !verify);
                 if (T > kGemmT && !verify) {   // a prompt chunk: the column-split delta rule, then the norm
+                    if (chunked_gdn)
+                        CK(q36gdn::launch(S[li], hc_b, C, al_b, be_b, gdn_y, HK, HV, T, gdn_L, gdn_P, gdn_cum, st));
+                    else
                     k_gdn_seq_cols<<<dim3(HV, kGdnColGroups), dim3(128 / kGdnColGroups, 16), 0, st>>>(S[li], hc_b, C, al_b,
                                                                                                       be_b, gdn_y, HK, HV, T);
                     k_gdn_norm<<<dim3(HV, T), 128, 0, st>>>(gdn_y, z, L.ssm_norm, m->eps, gdn_y, HV);
@@ -4589,7 +4612,7 @@ int strata::qwen35::run(int argc, char** argv) {
     bool serve_mode = false, graph = true, vision = false, batch_mtp = false;
     // the opt-ins of this engine path (docs/QWEN36.md): off, they leave the default path as it was
     std::string kv = "fp32", tokens_file, expert_profile, expert_profile_save;
-    bool gqa_attn = false, zero_copy = false, snapshot_host = false, fused_pattn = false;
+    bool gqa_attn = false, zero_copy = false, snapshot_host = false, fused_pattn = false, chunked_gdn = false;
     int expert_prefetch = 0, decode_swaps = -1, snapshots = 0;
     int64_t snapshot_min = 4096;
     for (int i = 1; i < argc; ++i) {
@@ -4641,6 +4664,7 @@ int strata::qwen35::run(int argc, char** argv) {
         else if (a == "--hybrid-rows") hybrid_rows = std::atoi(next().c_str());
         else if (a == "--kv") kv = next();   // strata's names (checked below): fp16, int8, k8v4; fp32 this path's default
         else if (a == "--gqa-attn") gqa_attn = true;               // the grouped-query decode attention (fp32 / int8 cache)
+        else if (a == "--chunked-gdn") chunked_gdn = true;        // the prompt's gated delta rule in pieces of 16 tokens
         else if (a == "--fused-prompt-attn") fused_pattn = true;   // the prompt attention in one kernel (int8 cache)
         else if (a == "--hybrid-zero-copy") zero_copy = true;      // the hybrid hand-off without copies
         else if (a == "--expert-prefetch") expert_prefetch = std::atoi(next().c_str());   // P prefetch slots per layer
@@ -4662,7 +4686,7 @@ int strata::qwen35::run(int argc, char** argv) {
                          "usage: strata-q36 --model GGUF [--max-context 32768] [--chunk 512] [--no-graph]\n"
                          "       (--serve | --tokens IDS | --tokens-file F [--n 64] [--force IDS] [--dump-full-logits F] | "
                          "--bench-pp N --bench-tg N)\n"
-                         "       opt-ins (docs/QWEN36.md): [--kv fp32|fp16|int8|k8v4] [--gqa-attn] [--fused-prompt-attn] [--mtp-sampled off|match|q]\n"
+                         "       opt-ins (docs/QWEN36.md): [--kv fp32|fp16|int8|k8v4] [--gqa-attn] [--fused-prompt-attn] [--chunked-gdn] [--mtp-sampled off|match|q]\n"
                          "       [--spec-min-p P] [--snapshots K] [--snapshot-min N] [--snapshot-host] [--expert-profile F] [--expert-profile-save F]\n"
                          "       [--expert-prefetch P] [--hybrid-zero-copy] [--decode-swaps N]\n");
             return 2;
@@ -4711,6 +4735,7 @@ int strata::qwen35::run(int argc, char** argv) {
     }
     E.gqa_attn = gqa_attn;
     E.fused_pattn = fused_pattn;
+    E.chunked_gdn = chunked_gdn;
     if (decode_swaps >= 0) E.decode_swaps = decode_swaps;
     E.zc = zero_copy;
     E.pf_want = expert_prefetch;
