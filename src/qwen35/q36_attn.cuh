@@ -10,6 +10,8 @@
 #include <cstdio>
 #include <type_traits>
 #include <cstdlib>
+#include <cctype>
+#include <string>
 #include <algorithm>
 
 namespace q36attn {
@@ -503,10 +505,17 @@ __global__ void __launch_bounds__(256, R == 1 ? 2 : 1) part_q8x(const float* q, 
 // STRATA_Q36_ATTN_MMA: unset -1 (the engine's default decides), 0 off, anything else on.  The engine resolves it with --attn-mma /
 // --no-attn-mma and its hardware checks (resolve_defaults in q36_engine.cu) and sets mma_enabled(); a tool that includes this file
 // gets the variable alone (off when unset).
-inline int mma_env() {
-    const char* v = std::getenv("STRATA_Q36_ATTN_MMA");
-    return v == nullptr || *v == '\0' ? -1 : (v[0] == '0' && v[1] == '\0') ? 0 : 1;
+inline int env_tri(const char* name) {   // 0/off/false/no -> 0, 1/on/true/yes -> 1, unset -> -1; anything else is said and counts as unset
+    const char* v = std::getenv(name);
+    if (v == nullptr || *v == '\0') return -1;
+    std::string x(v);
+    for (char& c : x) c = (char) std::tolower((unsigned char) c);
+    if (x == "0" || x == "off" || x == "false" || x == "no") return 0;
+    if (x == "1" || x == "on" || x == "true" || x == "yes") return 1;
+    std::fprintf(stderr, "strata-q36: %s=%s: not 0 / off / false / no or 1 / on / true / yes, ignored (the default decides)\n", name, v);
+    return -1;
 }
+inline int mma_env() { return env_tri("STRATA_Q36_ATTN_MMA"); }
 // the tensor-core kernel part_q8m for the int8 cache (class B, sm_80+)
 inline bool& mma_enabled() {
     static bool on = mma_env() == 1;

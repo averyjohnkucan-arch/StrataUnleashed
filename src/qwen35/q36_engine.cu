@@ -1162,10 +1162,11 @@ constexpr size_t kMmqTail = 4096;
 constexpr size_t kHybridHeadroom = (size_t) 256 << 20;   // hybrid placement: free VRAM kept at the low-water mark
 constexpr size_t kLazyGrowth = (size_t) 48 << 20;        // ... plus the engine's lazy growth after placement (measured 21 MiB)
 constexpr size_t kPlacedAfter = (size_t) 96 << 20;       // ... plus what place_experts allocates after reading the free VRAM (measured 95 MiB)
-// the defaults of --pool-warm K and --prefetch-copies 0|1 (--no-pool-warm: K = 0; the envs STRATA_Q36_POOL_WARM / STRATA_Q36_PREFETCH_COPIES override
-// these, the flags override the envs).  Default-on needs the lookahead too (--expert-prefetch's default, now 0), or the warm-up posts nothing
-constexpr int kPoolWarmDefault = 0, kPrefetchCopiesDefault = 1;
-constexpr bool kLendDefault = false;   // --lend-staging on without the flag (--no-lend-staging turns it off): flipped after the stacked gate
+// the defaults of --pool-warm K and --prefetch-copies 0|1 (--no-pool-warm: K = 0, --prefetch-copies 1: the copies; the envs STRATA_Q36_POOL_WARM /
+// STRATA_Q36_PREFETCH_COPIES override these, the flags override the envs).  Measured on the stack with every default on (docs/QWEN36.md "Defaults on this
+// build"): warm 3 with no prefetch copies beats copies without warm-up and warm-up with copies.  Both need the lookahead (--expert-prefetch P > 0),
+// which has no default: without it the warm-up posts nothing and there are no copies to skip.
+constexpr int kPoolWarmDefault = 3, kPrefetchCopiesDefault = 0;
 size_t gcd_sz(size_t a, size_t b) { return b ? gcd_sz(b, a % b) : a; }
 size_t lcm_sz(size_t a, size_t b) { return a / gcd_sz(a, b) * b; }
 size_t block_bytes(int type) {
@@ -4594,8 +4595,8 @@ bool place_experts(Model& m, Engine& E, double vram_gib, int threads, int hybrid
             CK(cudaEventRecord(E.ev_used[b], E.st));
         }
     }
-    if (E.lend_on && !(staging && E.main_hybrid)) {
-        std::fprintf(stderr, "strata-q36: --lend-staging needs the hybrid mode with prompt staging; off\n");
+    if (E.lend_on && !(staging && E.main_hybrid)) {   // (by default said only when asked for: the resolver's estimate of the hybrid mode can be off)
+        if (E.lend_explicit) std::fprintf(stderr, "strata-q36: --lend-staging needs the hybrid mode with prompt staging; off\n");
         E.lend_on = false;
     }
     if (E.lend_on && E.n_sess > 1) {   // (not tested with several sessions)
@@ -5526,8 +5527,11 @@ struct DefaultsIn {
     int snapshots = 0;                // --snapshots K
     bool hybrid_certain = false;      // the routed experts cannot all be in VRAM (slots + the CPU pool)
     std::string kv = "fp32";
+    int ndev = 1;                     // CUDA devices visible
+    std::string nocuda = "HIP (CUDA only)";   // why cc_major is 0
+    std::string fits;                 // "the experts fit in VRAM (X GiB of experts, Y GiB free)" when hybrid_certain is false
 };
-enum { kDfAttnMma, kDfPattn, kDfChunkedGdn, kDfSnapHost, kDfCount };
+enum { kDfAttnMma, kDfPattn, kDfChunkedGdn, kDfSnapHost, kDfLend, kDfAsync, kDfSample, kDfCount };
 struct Dflt {
     const char* name = "";
     bool on = false;
@@ -5554,7 +5558,7 @@ std::array<Dflt, kDfCount> resolve_defaults(const DefaultsIn& in, const int (&wa
         // (k8v4 keeps its own reader), the grouped-query kernel's 8 query heads of 256 per KV head.  Measured: Sage, RTX 5080,
         // --gqa-attn --kv int8 (single session).  --batch (rows mode) was parity-checked, never run in the engine: not a default.
         std::string hard, soft;
-        if (in.cc_major == 0) hard = "HIP (CUDA only)";
+        if (in.cc_major == 0) hard = in.nocuda;
         else if (in.cc_major < 8) hard = sm;
         else if (!in.kv_int8) hard = need_int8;
         else if (!in.gqa_attn) hard = "needs --gqa-attn";
@@ -5566,7 +5570,7 @@ std::array<Dflt, kDfCount> resolve_defaults(const DefaultsIn& in, const int (&wa
         // Engine::init (q36pattn::supported); a prompt chunk of one session, so --batch changes nothing in its path
         std::string hard;
         if (!in.kv_int8) hard = need_int8;
-        else if (in.cc_major == 0) hard = "HIP (CUDA only)";
+        else if (in.cc_major == 0) hard = in.nocuda;
         else if (in.cc_major < 8) hard = sm;
         else if (!q36pattn::supported(in.cc_major, in.n_head, in.n_head_kv, in.head_dim)) hard = "needs 8 query heads of 256 per KV head";
         r[kDfPattn] = pick_default("fused-prompt-attn", want[kDfPattn], off_by[kDfPattn], hard, "");
@@ -5574,7 +5578,7 @@ std::array<Dflt, kDfCount> resolve_defaults(const DefaultsIn& in, const int (&wa
     {   // the prompt's gated delta rule in pieces of 16 tokens (q36_gdn.cuh): FP32 products from shared memory, no tensor cores, any
         // NVIDIA arch; 128 x 128 states
         std::string hard;
-        if (in.cc_major == 0) hard = "HIP (CUDA only)";
+        if (in.cc_major == 0) hard = in.nocuda;
         else if (in.ssm_state != 128 || in.ssm_k_heads <= 0 || in.ssm_v_heads % in.ssm_k_heads != 0 ||
                  in.ssm_value_dim != in.ssm_v_heads * 128)
             hard = "needs 128 x 128 states";
@@ -5586,8 +5590,29 @@ std::array<Dflt, kDfCount> resolve_defaults(const DefaultsIn& in, const int (&wa
         if (in.snapshots <= 0) hard = "needs --snapshots K";
         else if (in.cc_major == 0) hard = "HIP (not measured)";
         if (in.batch > 1) soft = "--batch: not measured";
-        else if (!in.hybrid_certain) soft = "the experts fit in VRAM: nothing to give to slots";
+        else if (!in.hybrid_certain) soft = in.fits + ": nothing to give to slots";
         r[kDfSnapHost] = pick_default("snapshot-host", want[kDfSnapHost], off_by[kDfSnapHost], hard, soft);
+    }
+    {   // the prompt staging buffers as extra expert slots while decoding (class C; vram-3/4): the hybrid mode's staging; --batch is refused (the
+        // sessions' windows stream prompts between decodes, never run with it); a second device was never tested: only on request
+        std::string hard, soft;
+        if (in.cc_major == 0) hard = in.nocuda;
+        else if (in.batch > 1) hard = "--batch: not tested";
+        if (in.ndev > 1) soft = std::to_string(in.ndev) + " devices: not tested";
+        else if (!in.hybrid_certain) soft = in.fits + ": no staging to lend";
+        r[kDfLend] = pick_default("lend-staging", want[kDfLend], off_by[kDfLend], hard, soft);
+    }
+    {   // the slot swaps' copies on a copy stream (class C, +0.3-0.9%): only the hybrid mode swaps slots; --async-after-prompt stays off (a trade-off)
+        std::string hard, soft;
+        if (in.cc_major == 0) hard = in.nocuda;
+        if (in.batch > 1) soft = "--batch: not measured";
+        else if (!in.hybrid_certain) soft = in.fits + ": no slot swaps";
+        r[kDfAsync] = pick_default("async-swaps", want[kDfAsync], off_by[kDfAsync], hard, soft);
+    }
+    {   // a sampled row comes to the host as a shortlist (class A with the tie rule): CUDA kernels (k_cand_part / k_cand_merge)
+        std::string hard;
+        if (in.cc_major == 0) hard = in.nocuda;
+        r[kDfSample] = pick_default("sample-gpu", want[kDfSample], off_by[kDfSample], hard, "");
     }
     return r;
 }
@@ -5608,7 +5633,9 @@ int strata::qwen35::run(int argc, char** argv) {
     std::string kv = "fp32", tokens_file, expert_profile, expert_profile_save;
     bool gqa_attn = false, zero_copy = false, snapshot_host = false, fused_pattn = false, chunked_gdn = false, fused_pattn_i8 = false, attn_mma = false, async_swaps = false, async_after = false;
     bool no_attn_mma = false, no_fused_pattn = false, no_chunked_gdn = false, no_snapshot_host = false;   // the --no-<flag> escapes (resolve_defaults)
-    bool lend_staging = kLendDefault, lend_set = false;
+    bool no_async_swaps = false, no_sample_gpu = false;
+    bool lend_explicit_on = false;
+    bool lend_staging = false, lend_set = false;   // lend_set: --lend-staging or --no-lend-staging was given
     int expert_prefetch = 0, decode_swaps = -1, snapshots = 0, pool_warm = -1, prefetch_copies = -1;
     int64_t snapshot_min = 4096;
     for (int i = 1; i < argc; ++i) {
@@ -5697,6 +5724,8 @@ int strata::qwen35::run(int argc, char** argv) {
         else if (a == "--no-fused-prompt-attn") no_fused_pattn = true;
         else if (a == "--no-chunked-gdn") no_chunked_gdn = true;
         else if (a == "--no-snapshot-host") no_snapshot_host = true;
+        else if (a == "--no-async-swaps") no_async_swaps = true;
+        else if (a == "--no-sample-gpu") no_sample_gpu = true;
         else if (serve_mode && a.rfind("--", 0) == 0) {
             // serve passes the config's args plus a few of its own: one this engine does not have is said and skipped
             // (with its value), not fatal
@@ -5710,7 +5739,7 @@ int strata::qwen35::run(int argc, char** argv) {
                          "       (--serve | --tokens IDS | --tokens-file F [--n 64] [--force IDS] [--dump-full-logits F] | "
                          "--bench-pp N --bench-tg N)\n"
                          "       on by default where the hardware takes them (docs/QWEN36.md): --attn-mma --fused-prompt-attn --chunked-gdn\n"
-                         "       --snapshot-host; each has a --no-<name> escape\n"
+                         "       --snapshot-host --lend-staging --async-swaps --sample-gpu; each has a --no-<name> escape\n"
                          "       opt-ins (docs/QWEN36.md): [--kv fp32|fp16|int8|k8v4] [--gqa-attn] [--attn-mma] [--fused-prompt-attn[-i8]] [--chunked-gdn] [--mtp-sampled off|match|q]\n"
                          "       [--spec-min-p P] [--snapshots K] [--snapshot-min N] [--snapshot-host] [--async-swaps]\n"
                          "       [--async-after-prompt] [--lend-staging | --no-lend-staging] [--expert-profile F] [--expert-profile-save F]\n"
@@ -5778,11 +5807,18 @@ int strata::qwen35::run(int argc, char** argv) {
         din.ssm_value_dim = (int) m.g.ssm_value_dim;
         din.batch = batch;
         din.snapshots = snapshots;
+#if !defined(__HIPCC__)
+        if (major == 0) din.nocuda = "no CUDA device";
+        (void) cudaGetDeviceCount(&din.ndev);
+#endif
         {   // hybrid for certain: --expert-slots / --expert-vram below the experts' size, or the experts larger than the free VRAM now
             size_t fr = 0, tot = 0, experts = 0;
             CK(cudaMemGetInfo(&fr, &tot));
             for (const Layer& L : m.layers) experts += L.stride * (size_t) m.g.n_expert;
             din.hybrid_certain = expert_slots > 0 || experts > fr || (expert_vram >= 0 && (double) experts > expert_vram * (double) (1ull << 30));
+            char nb[160];
+            std::snprintf(nb, sizeof nb, "the experts fit in VRAM (%.1f GiB of experts, %.1f GiB free)", (double) experts / (1 << 30), (double) fr / (1 << 30));
+            din.fits = nb;
         }
         const int menv = q36attn::mma_env();   // STRATA_Q36_ATTN_MMA: 0 off, 1 on; the flags win over it
         int want[kDfCount];
@@ -5795,12 +5831,25 @@ int strata::qwen35::run(int argc, char** argv) {
         off_by[kDfChunkedGdn] = "--no-chunked-gdn";
         want[kDfSnapHost] = no_snapshot_host ? 0 : snapshot_host ? 1 : -1;
         off_by[kDfSnapHost] = "--no-snapshot-host";
+        // (the flags the resolver does not own: --pool-warm K / --prefetch-copies 0|1 take their defaults from kPoolWarmDefault /
+        // kPrefetchCopiesDefault in place_experts; --async-after-prompt, --fused-prompt-attn-i8, --random-seed, --draft-vocab / --draft-ctx stay opt-in)
+        want[kDfLend] = lend_set ? (lend_staging ? 1 : 0) : -1;
+        off_by[kDfLend] = "--no-lend-staging";
+        want[kDfAsync] = no_async_swaps ? 0 : async_swaps ? 1 : -1;
+        off_by[kDfAsync] = "--no-async-swaps";
+        const int senv = q36attn::env_tri("STRATA_Q36_SAMPLE_GPU");   // 0 / 1 as the other switches; the flags win
+        want[kDfSample] = no_sample_gpu ? 0 : sample_gpu ? 1 : senv;
+        off_by[kDfSample] = no_sample_gpu ? "--no-sample-gpu" : "STRATA_Q36_SAMPLE_GPU=0";
         const auto df = resolve_defaults(din, want, off_by);
         attn_mma = df[kDfAttnMma].on;
         fused_pattn = df[kDfPattn].on;
         fused_pattn_i8 = fused_pattn_i8 && fused_pattn;   // (--fused-prompt-attn-i8 stays an explicit opt-in)
         chunked_gdn = df[kDfChunkedGdn].on;
         snapshot_host = df[kDfSnapHost].on;
+        lend_explicit_on = lend_set && lend_staging;
+        lend_staging = df[kDfLend].on;
+        async_swaps = df[kDfAsync].on;
+        sample_gpu = df[kDfSample].on;
         std::string line;
         for (const Dflt& d : df) {
             if (!line.empty()) line += ", ";
@@ -5836,14 +5885,14 @@ int strata::qwen35::run(int argc, char** argv) {
     // --async-swaps: the decode rebalance's copies; --async-after-prompt: the after-prompt rebalance's too;
     // STRATA_Q36_ASYNC_SWAPS=1 / 2 / 3 sets the two bits (tests)
     E.lend_on = lend_staging;
-    E.lend_explicit = lend_set;
+    E.lend_explicit = lend_explicit_on;
     if (const char* ls = std::getenv("STRATA_Q36_LEND_SETTLE")) E.lend_settle = std::atoi(ls) != 0;   // 1: all lent copies settled before the first decode forward
     if (const char* lp = std::getenv("STRATA_Q36_LEND_PRIOR")) E.lend_prior = std::atoi(lp) != 0;   // 0: the counts only (tests)
     E.async_mask = (async_swaps ? 1 : 0) | (async_after ? 2 : 0) |
                    (std::getenv("STRATA_Q36_ASYNC_SWAPS") ? std::atoi(std::getenv("STRATA_Q36_ASYNC_SWAPS")) & 3 : 0);
+    if (no_async_swaps) E.async_mask &= ~1;   // (the escape wins over the test variable)
     E.async_swaps = E.async_mask != 0;
-    if (snapshot_host && E.n_snaps == 0)
-        std::fprintf(stderr, "strata-q36: --snapshot-host does nothing without --snapshots K\n");
+    // (--snapshot-host without --snapshots K: resolve_defaults turned it off and said why)
     const char* snap_test = std::getenv("STRATA_Q36_SNAPSHOT_TEST");
     if (snap_test && !serve_mode) E.n_snaps = std::max(E.n_snaps, 1);
     if (chunk == 0) {
@@ -5987,7 +6036,7 @@ int strata::qwen35::run(int argc, char** argv) {
     E.mtp_d = m.has_mtp ? mtp_d : 0;
     E.mtp_sampled = mtp_sampled;
     const auto env_on = [](const char* k) { const char* v = std::getenv(k); return v != nullptr && *v != '\0' && std::strcmp(v, "0") != 0; };
-    E.sample_gpu = sample_gpu || env_on("STRATA_Q36_SAMPLE_GPU");
+    E.sample_gpu = sample_gpu;   // (resolve_defaults: the flag, STRATA_Q36_SAMPLE_GPU, --no-sample-gpu)
     E.random_seed = random_seed || env_on("STRATA_Q36_RANDOM_SEED");
     E.smp_prof = env_on("STRATA_Q36_SAMPLE_PROFILE");
     E.smp_check = env_on("STRATA_Q36_SAMPLE_CHECK");

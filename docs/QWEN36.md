@@ -267,7 +267,11 @@ configuration only (marked "default only"), the default stays off elsewhere whil
 | `--attn-mma` | B (KL inside the `--prefill 1024` floor) | CUDA sm_80+, `--kv int8`, `--gqa-attn`, 8 query heads of 256 per KV head; default only: not with `--batch` | `--no-attn-mma`, `STRATA_Q36_ATTN_MMA=0` | decode `--mtp 0` forced text +4.6 / +2.6 / +6.6% at 4K / 16K / 40K over the build with `part_q8` (+1.3 / +1.4 / +3.0% over `part_q8x`); `--mtp 2`, 40K, fixed slots: 125.3 against 117.7 tok/s; a 3-row window at 262K cells 1,549 -> 425 us per layer (microbench) |
 | `--fused-prompt-attn` | B | CUDA sm_80+, `--kv int8`, 8 query heads of 256 per KV head | `--no-fused-prompt-attn` | fresh prompt read 40K 4,570 -> 5,420 tok/s, 16K 5,768 -> 5,870; decode +3.5 / +3.6 / +2.1% at 4K / 16K / 40K (12 more expert slots) |
 | `--chunked-gdn` | B | CUDA (any arch), 128 x 128 states | `--no-chunked-gdn` | fresh prompt read 40K 4,560 -> 4,705, 16K 5,760 -> 5,816; decode unchanged |
-| `--snapshot-host` | A (the same bytes) | `--snapshots K` with K > 0, CUDA, the hybrid mode for certain (experts larger than the free VRAM, or `--expert-slots`); default only: not with `--batch` | `--no-snapshot-host` | cache slots 80 -> 82 with `--snapshots 2`, decode +0.7% |
+| `--snapshot-host` | A for the bytes (its only effect is 2 more slots: +0.7% decode, below the 2% bar, on by policy) | `--snapshots K` with K > 0, CUDA, the hybrid mode for certain (experts larger than the free VRAM, or `--expert-slots`); default only: not with `--batch` | `--no-snapshot-host` | cache slots 80 -> 82 with `--snapshots 2`, decode +0.7% |
+| `--lend-staging` | C by default (B with `STRATA_Q36_LEND_SETTLE=1`) | CUDA, the hybrid mode for certain, one session, one device (an explicit flag overrides the device count) | `--no-lend-staging` | 13 more cache slots per layer: decode +2.8 / +3.4 / +1.5% at 4K / 16K / 40K, GPU share +2 to +3 points; `--mtp 2` +4.8 / +4.2 / +3.2% at 4K / 16K / 40K; prompt speed unchanged; KL mean 2.2e-3 to 4.3e-3 (below the slot-count controls) |
+| `--async-swaps` | C (a swapped-in expert can be visible one forward later) | CUDA, the hybrid mode for certain, one session; `--async-after-prompt` stays off | `--no-async-swaps` | decode +0.9 / +0.4 / +0.3% (only 4K outside the noise); the swaps' host time 20.8 -> 2.0 ms per 256 tokens |
+| `--sample-gpu` | A (with the tie rule: equal logits sort by id) | CUDA | `--no-sample-gpu`, `STRATA_Q36_SAMPLE_GPU=0` | sampled decode 183 -> 189 tok/s (+3%), sampled `--mtp 2 --mtp-sampled q` 210 -> 229 (+9%, 32K context, one run) |
+| `--pool-warm 3 --prefetch-copies 0` | C (the warm-up and the copies are timing) | with `--expert-prefetch P` (the lookahead; no default of its own); hybrid mode | `--no-pool-warm`, `--prefetch-copies 1` | with every default on, `--expert-prefetch 2 --hybrid-zero-copy` (production): decode 232.8 / 199.1 / 217.6 -> 247.6 / 214.8 / 227.0 tok/s (+6.4 / +7.9 / +4.3%), `--mtp 2` 278.8 / 259.9 / 257.6 -> 295.8 / 276.9 / 277.5 (+6.1 / +6.5 / +7.7%) at 4K / 16K / 40K; warm 3 with the copies on: 230.2 / 187.3 / 217.1 (no gain) |
 
 Stays off: `--fused-prompt-attn-i8` (int8 scores: precision), `--gqa-attn` and `--kv` (the choices of the cache; the first three rows
 need them), everything under "Test settings". On a card below sm_80 the log says `attn-mma off (compute capability 7.x, needs sm_80+)`
@@ -330,8 +334,8 @@ and the same for the fused prompt attention. `STRATA_Q36_DEFAULTS_SM=N` (a test 
   1.20e-2, median 2.0e-3, p99 0.078, max 0.97 (the 14K prompt: mean 2.3e-2, max 0.97, top-1 58 of 65 steps; the controls are
   `--prefill 1024` with mean 8.9e-3 and max 0.51, and the accepted prefetch opt-ins with mean 2.2e-2 and max 1.95). Chunks of 9-33
   rows are a few microseconds per layer slower than the default kernel. Measured on a Core Ultra 9 285K with 61 GB DDR5-6800.
-- **`--attn-mma`** (**on by default** with `--gqa-attn --kv int8` on sm_80+; `--no-attn-mma` turns it off. `STRATA_Q36_ATTN_MMA=0` also turns
-  it off and `=1` on; the flags win over the variable): the decode attention on tensor cores
+- **`--attn-mma`** (**on by default** with `--gqa-attn --kv int8` on sm_80+; `--no-attn-mma` turns it off. `STRATA_Q36_ATTN_MMA` also decides: `0` / `off` / `false` / `no`
+  is off, `1` / `on` / `true` / `yes` is on, any other value is said on stderr and ignored; the flags win over the variable): the decode attention on tensor cores
   (`part_q8m`): the window's query rows (8 per row) against the int8 cells as fp16 `mma.sync` products with fp32 accumulation, the cache
   read once per window. **Not bit-identical** to the default kernel: q, the softmax weights times the V scale, and the products are
   rounded to fp16 (about 5e-4 relative, 2^-11), K and V enter as their exact int8 values and the K scale stays fp32. A row's result does not depend on the other rows of
@@ -344,7 +348,7 @@ and the same for the fused prompt attention. `STRATA_Q36_DEFAULTS_SM=N` (a test 
   deterministic shape (fixed slots, no prefetch) 125.3 tok/s against 117.7 (default kernel) and 116.0 (the first int8 kernel), the
   same acceptance within a draft or two. The explicit flag without `--gqa-attn`, without `--kv int8`, or below sm_80 does nothing, and the
   `defaults:` line says why.
-- **`--sample-gpu`** (env `STRATA_Q36_SAMPLE_GPU=1`): a sampled row comes to the host as a shortlist, not as 1 MB of logits. A GPU
+- **`--sample-gpu`** (**on by default** on CUDA; `--no-sample-gpu` or `STRATA_Q36_SAMPLE_GPU=0` turns it off): a sampled row comes to the host as a shortlist, not as 1 MB of logits. A GPU
   kernels (`k_cand_part`, `k_cand_merge`) return the K highest raw logits of each row (K = `top_k` + the number of distinct ids the penalties touch,
   at most 160; ties: the higher logit, then the lower id), and the host applies the penalties to them and runs the rest of the chain.
   Penalties only lower a logit, so the shortlist holds the same top_k as the whole row and the token, the rng use and the text
@@ -371,9 +375,9 @@ and the same for the fused prompt attention. `STRATA_Q36_DEFAULTS_SM=N` (a test 
   penalties apply to the ids the draft row has.
 - **`--snapshot-host`**: the snapshots of `--snapshots K` in pinned host memory (see below).
 - **`--lend-staging`** / **`--no-lend-staging`**: the prompt staging buffers (0.97 GiB, idle while decoding) hold 13 more expert slots per layer in decode
-  (see "Lent staging" below). Off unless given; one constant (`kLendDefault`) turns it on without the flag, `--no-lend-staging` turns it off again.
-  It is off with `--batch`, and with more than one device unless the flag is given.
-- **`--async-swaps`**, **`--async-after-prompt`**: the expert slots' swaps (every 32 decode rows, `--decode-swaps`; and after a prompt read, up to
+  (see "Lent staging" below). **On by default** in the hybrid mode (the experts larger than the free VRAM), `--no-lend-staging` turns it off. It is off with
+  `--batch`, and with more than one device unless the flag is given.
+- **`--async-swaps`** (**on by default** in the hybrid mode, `--no-async-swaps` turns it off), **`--async-after-prompt`** (opt-in, stays off: a trade-off, see "Slot swaps"): the expert slots' swaps (every 32 decode rows, `--decode-swaps`; and after a prompt read, up to
   2048) copy on a copy stream instead of stopping the engine stream and the host, into the slot of an expert that already left the table;
   the new expert enters the tables only once its copy has landed (checked at the start of the next forward), so no slot is read before its
   bytes arrived. `--async-swaps` takes the decode ones, `--async-after-prompt` the after-prompt ones too (see "Slot swaps" below). They need
