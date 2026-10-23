@@ -4664,7 +4664,8 @@ bool place_experts(Model& m, Engine& E, double vram_gib, int threads, int hybrid
         E.pf_no_copy = copies == 0;
     }
     const char* wk = std::getenv("STRATA_Q36_POOL_WARM");
-    const int warm_k = E.pool_warm_want >= 0 ? E.pool_warm_want : wk ? std::atoi(wk) : kPoolWarmDefault;
+    // (the default warm-up needs the lookahead: without --expert-prefetch it would post nothing and only say so; a flag or the env still asks)
+    const int warm_k = E.pool_warm_want >= 0 ? E.pool_warm_want : wk ? std::atoi(wk) : P > 0 ? kPoolWarmDefault : 0;
     if (warm_k > 0) {   // POOL-4: experts per layer the parked pool workers pre-load (needs the lookahead of --expert-prefetch)
         E.pool_warm_k = std::max(0, std::min(C::ExpertPool::kMaxWarm, warm_k));
         if (E.pool_warm_k > 0) E.pool->enable_warm(true);
@@ -5612,6 +5613,7 @@ std::array<Dflt, kDfCount> resolve_defaults(const DefaultsIn& in, const int (&wa
     {   // a sampled row comes to the host as a shortlist (class A with the tie rule): CUDA kernels (k_cand_part / k_cand_merge)
         std::string hard;
         if (in.cc_major == 0) hard = in.nocuda;
+        else if (in.cc_major < 7) hard = "compute capability " + std::to_string(in.cc_major) + ".x, needs sm_70+ (__match_any_sync)";
         r[kDfSample] = pick_default("sample-gpu", want[kDfSample], off_by[kDfSample], hard, "");
     }
     return r;
@@ -5635,7 +5637,7 @@ int strata::qwen35::run(int argc, char** argv) {
     bool no_attn_mma = false, no_fused_pattn = false, no_chunked_gdn = false, no_snapshot_host = false;   // the --no-<flag> escapes (resolve_defaults)
     bool no_async_swaps = false, no_sample_gpu = false;
     bool lend_explicit_on = false;
-    bool lend_staging = false, lend_set = false;   // lend_set: --lend-staging or --no-lend-staging was given
+    bool lend_staging = false, no_lend_staging = false;   // --lend-staging / --no-lend-staging (the escape wins whatever the order)
     int expert_prefetch = 0, decode_swaps = -1, snapshots = 0, pool_warm = -1, prefetch_copies = -1;
     int64_t snapshot_min = 4096;
     for (int i = 1; i < argc; ++i) {
@@ -5714,10 +5716,8 @@ int strata::qwen35::run(int argc, char** argv) {
         else if (a == "--snapshots") snapshots = std::atoi(next().c_str());       // recurrent-state snapshots per session
         else if (a == "--snapshot-min") snapshot_min = std::atoll(next().c_str());
         else if (a == "--async-swaps") async_swaps = true;   // the decode slot swaps' copies off the engine stream
-        else if (a == "--lend-staging" || a == "--no-lend-staging") {   // the prompt staging buffers as extra expert slots in decode
-            lend_staging = a == "--lend-staging";
-            lend_set = true;
-        }
+        else if (a == "--lend-staging") lend_staging = true;       // the prompt staging buffers as extra expert slots in decode
+        else if (a == "--no-lend-staging") no_lend_staging = true;
         else if (a == "--async-after-prompt") async_after = true;   // ... and the after-prompt ones
         else if (a == "--snapshot-host") snapshot_host = true;   // the snapshots in pinned host memory: more expert slots
         else if (a == "--no-attn-mma") no_attn_mma = true;                 // the escapes of the defaults (docs/QWEN36.md): off wins over the flag
@@ -5833,7 +5833,7 @@ int strata::qwen35::run(int argc, char** argv) {
         off_by[kDfSnapHost] = "--no-snapshot-host";
         // (the flags the resolver does not own: --pool-warm K / --prefetch-copies 0|1 take their defaults from kPoolWarmDefault /
         // kPrefetchCopiesDefault in place_experts; --async-after-prompt, --fused-prompt-attn-i8, --random-seed, --draft-vocab / --draft-ctx stay opt-in)
-        want[kDfLend] = lend_set ? (lend_staging ? 1 : 0) : -1;
+        want[kDfLend] = no_lend_staging ? 0 : lend_staging ? 1 : -1;
         off_by[kDfLend] = "--no-lend-staging";
         want[kDfAsync] = no_async_swaps ? 0 : async_swaps ? 1 : -1;
         off_by[kDfAsync] = "--no-async-swaps";
@@ -5846,7 +5846,7 @@ int strata::qwen35::run(int argc, char** argv) {
         fused_pattn_i8 = fused_pattn_i8 && fused_pattn;   // (--fused-prompt-attn-i8 stays an explicit opt-in)
         chunked_gdn = df[kDfChunkedGdn].on;
         snapshot_host = df[kDfSnapHost].on;
-        lend_explicit_on = lend_set && lend_staging;
+        lend_explicit_on = lend_staging && !no_lend_staging;
         lend_staging = df[kDfLend].on;
         async_swaps = df[kDfAsync].on;
         sample_gpu = df[kDfSample].on;
