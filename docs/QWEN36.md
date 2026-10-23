@@ -202,6 +202,8 @@ file (4.2e-3), not a quality loss. Greedy 64 tokens after those six documents: t
 `--prefill 512` for 6 of 6. A prompt shorter than the chunk (every chat turn after the first) is one chunk either way: unchanged.
 The maintainers keep the new default's reference outputs (six documents, greedy 64) and check later changes against them.
 
+**Experts streamed to the prompt (hybrid mode).** A prompt chunk of more than `--hybrid-rows` rows reads each layer's experts from a GPU staging buffer, two layers ahead. The experts that sit in VRAM slots are copied from there, only the others cross PCIe (runs of consecutive experts in one copy each); with fewer than 1/8 of the experts resident the whole layer is copied from host memory. The slot copies run on their own high-priority stream: a device-to-device copy is a kernel, and queued behind the PCIe copies it waited for the compute kernels' SMs and held the PCIe copies up (RTX 5080, 78 of 256 experts resident, Sage-A1.5 Q4_K_M, int8 KV, `--max-context 262144`, fresh 16K prompt: 4,570 tok/s with both kinds on one stream, 5,760 whole-layer copies, 6,090 with the slot copies on their own stream; 38 of 256 resident: 5,930 vs 5,780). The bytes in staging are the same (the logits are bit-identical). `STRATA_Q36_STREAM_ALL=1` gives the whole-layer copy.
+
 **Tried and dropped.** The MTP drafts' head over a subset of the vocabulary (`--draft-vocab N`, kept as an opt-in; the answer never
 changes): the first 16K-131K rows gain 5-8% on English and code but lose 10-15% on Chinese / Russian / Arabic / Hindi (70% of a Chinese
 prompt's token ids are above 65,536), and a candidate list built from the tokens seen so far loses on both. The shared expert on a second
