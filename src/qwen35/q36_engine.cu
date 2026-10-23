@@ -2642,6 +2642,26 @@ struct Engine {
             K::native_router_topk(logits_r, ids, ewts, (int) g.n_expert, Kp, T, st);
         const int64_t n_ent = (int64_t) T * Kp;
         const int32_t* prow = nullptr;
+        // the shared expert, scaled by sigmoid(w . h); a prompt chunk on MMQ runs it before the host waits for the routing
+        bool sh_done = false;
+        auto shared_expert = [&]() {
+            sh_done = true;
+            if (T > kGemmT) k_to_f16<<<grid1((int64_t) N * T), kThreads, 0, st>>>(h, x16, (int64_t) N * T);
+            if (T <= kGemmT) {
+                if (!shared_gu(L, T)) {
+                    apply(L.sh_gate, xq, sg, T);
+                    apply(L.sh_up, xq, su, T);
+                    K::native_swiglu_quantize_q8_1(sg, su, q8, FS, T, st);   // SwiGLU and its q8_1 image in one launch
+                }
+                mmq(L.sh_down, q8, sy, T);
+            } else {
+                apply(L.sh_gate, xq, sg, T);
+                apply(L.sh_up, xq, su, T);
+                k_swiglu<<<grid1((int64_t) T * FS), kThreads, 0, st>>>(sg, su, shh, (int64_t) T * FS);
+                mm(L.sh_down, shh, sy, T);
+            }
+            if (!ext) f32mm(L.sh_gate_inp, h, sgate, N, 1, T);
+        };
         if (hy_rows) {
             moe_hybrid_gpu(L, li, T);
         } else if (T > kGemmT && use_mmq) {
@@ -2655,7 +2675,9 @@ struct Engine {
             k_route_scatter<<<grid1(n_ent), kThreads, 0, st>>>(ids, (int) n_ent, Kp, rcur, ent_dst, ent_tok, rinv);
             CK(cudaMemcpyAsync(hpin + 10, rmax, 4, cudaMemcpyDeviceToHost, st));
             if (lhy(li)) CK(cudaMemcpyAsync(h_cnt + li * g.n_expert, rcnt, (size_t) ne * 4, cudaMemcpyDeviceToHost, st));
-            CK(cudaStreamSynchronize(st));
+            CK(cudaEventRecord(ev_route, st));
+            shared_expert();   // independent of the routing: the GPU runs it while the host waits for the counts
+            CK(cudaEventSynchronize(ev_route));
             if (lhy(li))
                 for (int x = 0; x < ne; ++x) {
                     hy[li].score[(size_t) x] += h_cnt[li * g.n_expert + x];
@@ -2685,22 +2707,7 @@ struct Engine {
             K::native_expert_grouped(L.L, grp_ptr, grp_start, n_groups, ent_dst, ent_tok,
                                      std::min<int64_t>(n_ent, g.n_expert), n_ent, xq, escr, eparts, st);
         }
-        // the shared expert, scaled by sigmoid(w . h)
-        if (T > kGemmT) k_to_f16<<<grid1((int64_t) N * T), kThreads, 0, st>>>(h, x16, (int64_t) N * T);
-        if (T <= kGemmT) {
-            if (!shared_gu(L, T)) {
-                apply(L.sh_gate, xq, sg, T);
-                apply(L.sh_up, xq, su, T);
-                K::native_swiglu_quantize_q8_1(sg, su, q8, FS, T, st);   // SwiGLU and its q8_1 image in one launch
-            }
-            mmq(L.sh_down, q8, sy, T);
-        } else {
-            apply(L.sh_gate, xq, sg, T);
-            apply(L.sh_up, xq, su, T);
-            k_swiglu<<<grid1((int64_t) T * FS), kThreads, 0, st>>>(sg, su, shh, (int64_t) T * FS);
-            mm(L.sh_down, shh, sy, T);
-        }
-        if (!ext) f32mm(L.sh_gate_inp, h, sgate, N, 1, T);
+        if (!sh_done) shared_expert();
         if (hy_rows) moe_hybrid_cpu(li, T);   // the CPU pool's experts (while the GPU runs the rest), merged
         // the combine, the shared expert's gate, the residual add and the next norm in one launch
         moe_end(T, prow, sy, ext ? logits_r + g.n_expert : sgate, wn, hout, ext ? (int) g.n_expert + 1 : 1);
