@@ -204,9 +204,12 @@ The maintainers keep the new default's reference outputs (six documents, greedy 
 
 **Experts streamed to the prompt (hybrid mode).** A prompt chunk of more than `--hybrid-rows` rows reads each layer's experts from a GPU staging buffer, two layers ahead. The experts that sit in VRAM slots are copied from there, only the others cross PCIe (runs of consecutive experts in one copy each); with fewer than 1/8 of the experts resident the whole layer is copied from host memory. The slot copies run on their own high-priority stream: a device-to-device copy is a kernel, and queued behind the PCIe copies it waited for the compute kernels' SMs and held the PCIe copies up (RTX 5080, 78 of 256 experts resident, Sage-A1.5 Q4_K_M, int8 KV, `--max-context 262144`, fresh 16K prompt: 4,570 tok/s with both kinds on one stream, 5,760 whole-layer copies, 6,090 with the slot copies on their own stream; 38 of 256 resident: 5,930 vs 5,780). The bytes in staging are the same (the logits are bit-identical). **This changed the default** (the split copy was taken only below half the experts resident before; now from 1/8 up): fresh prompt reads on the RTX 5080 (Sage-A1.5 Q4_K_M, 78 of 256 experts resident, int8 KV, `--max-context 262144`, CLI, repeat runs within 0.6%) went from 5,603 / 5,769 / 4,575 to 6,583 / 6,145 / 4,681 tok/s at 4K / 16K / 40K, and decode is unchanged (193.5 / 169.8 / 182.6 vs 193.8 / 169.8 / 183.0 tok/s). Two small steps ride with it, the same bytes in the same order: each token's MoE input is quantized once and scattered to its sorted rows (`STRATA_QUANT_GATHER=1` is the test switch back to one quantization per entry), and the per-layer wait for the routing counts is an event wait with the shared expert enqueued first. The old rule came from one RTX 3060 measurement (37 of 256 resident, both kinds of copy on one stream: 1,970 whole vs 1,540 in runs); it has not been re-run with the slot copies on their own stream, so a card with few experts resident may still prefer `STRATA_Q36_STREAM_ALL=1`, which gives the whole-layer copy.
 
-**Tried and dropped.** The MTP drafts' head over a subset of the vocabulary (`--draft-vocab N`, kept as an opt-in; the answer never
-changes): the first 16K-131K rows gain 5-8% on English and code but lose 10-15% on Chinese / Russian / Arabic / Hindi (70% of a Chinese
-prompt's token ids are above 65,536), and a candidate list built from the tokens seen so far loses on both. The shared expert on a second
+**Tried and dropped.** The MTP drafts' head over the first N token ids only (`--draft-vocab N`, an opt-in): the first 16K-131K rows gain
+5-8% on English and code but lose 10-23% on Chinese / Russian / Arabic / Korean (70% of a Chinese prompt's token ids are above 65,536).
+That result can only have come from a Q8_0 output matrix, the one the flag acted on: on Sage's Q6_K matrix the flag did nothing before `--draft-ctx` (below)
+made it work there. A candidate list built from the tokens seen so far (`--draft-ctx`) does help on Sage: it gives back what the prompt's own
+script needs (Hindi 223 -> 262 tok/s, Chinese 206 -> 227) but not a script that is only in the answer; it is an opt-in for English / code
+traffic, see its bullet. The shared expert on a second
 stream (captured into the decode graph) decodes at 36 tok/s instead of 117 with this ROCm. In the hybrid mode, a share of each token's
 missed experts copied over PCIe and run on the GPU beside the CPU pool: slower (a Qwen3.6-35B-A3B fine-tune (Q4_K_M), RTX 5080, DDR5-6400 dual channel: 155 instead of 184
 tok/s with 30% of them), because the copies read the same RAM the pool already nearly fills (88 of about 96 GB/s); and the CPU's
@@ -318,17 +321,23 @@ on the `strata-q36` command line.
   bytes arrived. `--async-swaps` takes the decode ones, `--async-after-prompt` the after-prompt ones too (see "Slot swaps" below). They need
   the pinned expert copy.
 - **`--draft-vocab N`** (multiple of 8) and **`--draft-ctx E`** (env `STRATA_Q36_DRAFT_VOCAB`, `STRATA_Q36_DRAFT_CTX`): the MTP draft head
-  scores the first N token ids plus up to E ids taken from the last 8,192 tokens of the conversation (refreshed every 32 tokens), instead
-  of all 248,320 rows. On a Q8_0 output matrix only the first N rows are scored (no E); on a Q6_K one (Sage's) the first N rows are read in
-  place and the context ids' rows are gathered into a small buffer (E x 1,680 bytes), both by the stock Q6_K kernel; E needs the hybrid mode
-  (the draft step is not a graph there). A draft only proposes, the verify window decides, so the answer does not change except through the
-  last-bit differences a different window brings (the same as `--spec-min-p`'s); with `--mtp-sampled q`, q is the chain over the scored ids
-  and the rule stays exact (`q36_sampling_test`: a draft list of ids 0-3, 6, 7 gives the target's joint). Measured (RTX 5080, Core Ultra 9
-  285K, Sage Q4_K_M ssmbf16, `--mtp 2 --spec-min-p 0.5`, greedy, no prefetch, 262K context reserved, agent prompts, 256 tokens): 4K prompt
-  243 -> 262 tok/s with `--draft-vocab 16384 --draft-ctx 4096` (+7.8%), 40K prompt 212 -> 228 (+7.3%); acceptance 86% -> 89% and 79% -> 79%.
+  scores the first N token ids plus up to E ids taken from the last 8,192 tokens of the conversation (a host scan and a gather, redone
+  every 32 tokens or more), instead of all 248,320 rows. On a Q8_0 output matrix only the first N rows are scored (no E); on a Q6_K one
+  (Sage's; before this change the flag did nothing there) the first N rows are read in place and the context ids' rows are gathered into a
+  small buffer (E x 1,680 bytes), both by the stock Q6_K kernel; E needs the hybrid mode (the draft step is not a graph there) and an output
+  matrix whose row is a multiple of 2048 inputs (else it is ignored with a message). A draft only proposes and the verify window decides,
+  but a different draft changes the window's shape and with it the last bits of the logits, so **the text is not guaranteed identical to the
+  full head's: it was identical in 5-10 of 10 prompts and 5-7 of 12** (numerics class B, like `--spec-min-p`; the KL check is in the
+  tests below). With `--mtp-sampled q`, q is the chain over the scored ids and the rule stays exact (`q36_sampling_test`: a draft list of
+  ids 0-3, 6, 7 gives the target's joint). Measured (RTX 5080, Core Ultra 9 285K, Sage Q4_K_M ssmbf16, `--mtp 2 --spec-min-p 0.5`, greedy, no
+  prefetch, 262K context reserved, agent prompts, 256 tokens): 4K prompt
+  242 -> 264 tok/s with `--draft-vocab 16384 --draft-ctx 4096` (+9.1%), 40K prompt 211 -> 227 (+7.3%); acceptance 86% -> 89% and 79% -> 79%.
+  Against plain greedy (`--mtp 0`) the text was identical in 7 of 10 prompts with these flags and 6 of 10 with the full head and MTP. The forced-text
+  KL set (14K, 57K, 76K prompts) is 0 against the production engine, which only shows that the flags leave the main model's logits alone (`--force`
+  turns MTP off, so the draft head is not on that path).
   The cost is on other scripts: 12 short prompts in 12 languages, 248 -> 231 tok/s with the same flags (-7%; with `--draft-vocab 32768`
   237, -4%): Chinese 251 -> 227, Arabic 257 -> 196, Korean 254 -> 215, Russian 264 -> 226, Hindi 272 -> 262; English 254 -> 265,
-  German 266 -> 268, code 176 -> 182, math 244 -> 243.
+  German 266 -> 268, code 176 -> 182, math 244 -> 243. So it is an opt-in for English / code traffic and no default.
 - **`--snapshots K`**, **`--snapshot-min N`**: see "A conversation that parts from the held tokens" (K up to 4).
 - **`--expert-profile F`**, **`--expert-profile-save F`** (the main path's names and file format, `tools/make_profile.py`): in the
   hybrid mode each layer's first expert slots take its most-routed experts from F instead of experts 0 .. S - 1, and at the engine's
