@@ -1141,7 +1141,7 @@ struct Model {
 
 constexpr size_t kMmqTail = 4096;
 // the defaults of --pool-warm K and --prefetch-copies 0|1 (--no-pool-warm: K = 0; the envs STRATA_Q36_POOL_WARM / STRATA_Q36_PREFETCH_COPIES override
-// these, the flags override the envs)
+// these, the flags override the envs).  Default-on needs the lookahead too (--expert-prefetch's default, now 0), or the warm-up posts nothing
 constexpr int kPoolWarmDefault = 0, kPrefetchCopiesDefault = 1;
 size_t gcd_sz(size_t a, size_t b) { return b ? gcd_sz(b, a % b) : a; }
 size_t lcm_sz(size_t a, size_t b) { return a / gcd_sz(a, b) * b; }
@@ -5022,8 +5022,17 @@ int strata::qwen35::run(int argc, char** argv) {
         else if (a == "--expert-profile") expert_profile = next();             // the main path's names: the initial slots
         else if (a == "--expert-profile-save") expert_profile_save = next();   // ... and what this run learned, at exit
         else if (a == "--no-pool-warm") pool_warm = 0;
-        else if (a == "--pool-warm") pool_warm = std::atoi(next().c_str());   // K predicted experts per layer warmed in the pool workers
-        else if (a == "--prefetch-copies") prefetch_copies = std::atoi(next().c_str());   // 0: the lookahead without the PCIe copies
+        else if (a == "--pool-warm" || a == "--prefetch-copies") {   // K predicted experts per layer warmed in the pool workers; 0|1: the PCIe copies
+            const std::string v = next();
+            char* end = nullptr;
+            const long x = std::strtol(v.c_str(), &end, 10);
+            const long hi = a == "--pool-warm" ? 8 : 1;
+            if (v.empty() || *end != 0 || x < 0 || x > hi) {
+                std::fprintf(stderr, "strata-q36: %s takes a whole number from 0 to %ld, not \"%s\"\n", a.c_str(), hi, v.c_str());
+                return 2;
+            }
+            (a == "--pool-warm" ? pool_warm : prefetch_copies) = (int) x;
+        }
         else if (a == "--decode-swaps") decode_swaps = std::atoi(next().c_str());   // the hybrid slots' swaps per 32 tokens
         else if (a == "--snapshots") snapshots = std::atoi(next().c_str());       // recurrent-state snapshots per session
         else if (a == "--snapshot-min") snapshot_min = std::atoll(next().c_str());

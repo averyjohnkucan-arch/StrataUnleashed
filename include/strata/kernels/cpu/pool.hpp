@@ -314,7 +314,7 @@ private:
     void drain(int id, ExpertScratch& scratch, uint32_t epoch);
     void run_phase(int mode, int n_tasks, int n_extra = 0);
     void native_rows(int e, int r0, int r1);
-    void warm_run(int id, uint32_t epoch);
+    void warm_run(int id, uint32_t epoch, uint32_t seq);
     /// Claim the next job of batch `epoch`, or -1 (that batch is exhausted, or it is not the current one).
     int claim(uint32_t epoch);
     /// Publish the batch whose description the caller has just written: reset `done`, then `head`, then the epoch.
@@ -367,12 +367,14 @@ private:
     alignas(64) std::atomic<uint32_t> epoch_{0};
     // POOL-4: the warm set (a seqlock: warm_seq_ is odd while the host writes it and moves to the next even value when it is
     // whole; a reader that sees the value change discards what it read), how many workers finished loading THAT set (warm_done_:
-    // the set's seq in the high 32 bits, the count in the low ones, so a count of an older set never counts), and the
+    // the set's seq in the high 32 bits, the count in the low ones, so a count of an older set never counts; the 32-bit seq wraps after 2^31 posts, which is days of decode, and a wrap is harmless: it needs the same value twice within one set's life), and the
     // static row slices of the current native phase (jobs [static_first_, static_first_ + static_n_), one slice per worker)
     bool warm_on_ = false;
-    const NativeFmt* warm_fmt_ = nullptr;
-    const uint8_t* warm_blob_[kMaxWarm] = {};
-    int warm_n_ = 0, static_first_ = 0, static_n_ = 0;
+    // (relaxed atomics: the seqlock's readers copy them while the host may be rewriting them, and discard the copy then)
+    std::atomic<const NativeFmt*> warm_fmt_{nullptr};
+    std::atomic<const uint8_t*> warm_blob_[kMaxWarm] = {};
+    std::atomic<int> warm_n_{0};
+    int static_first_ = 0, static_n_ = 0;
     alignas(64) std::atomic<uint32_t> warm_seq_{0};
     alignas(64) std::atomic<uint64_t> warm_done_{0};
     std::unique_ptr<std::atomic<uint32_t>[]> static_epoch_;

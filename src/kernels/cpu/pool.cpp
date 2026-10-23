@@ -1004,7 +1004,7 @@ void ExpertPool::worker(int id) {
                 const uint32_t ws = warm_seq_.load(std::memory_order_acquire);
                 if ((ws & 1u) == 0) {   // (odd: the host is writing the set; the even value that follows is a new one)
                     warm_seen = ws;
-                    warm_run(id, seen);
+                    warm_run(id, seen, ws);   // (this set, not a newer one posted since: that one is next, once)
                 }
                 continue;
             }
@@ -1199,9 +1199,9 @@ void ExpertPool::warm_post(const NativeFmt& f, const uint8_t* const* blobs, int 
     n = (std::min)(n, kMaxWarm);
     const uint32_t s0 = warm_seq_.load(std::memory_order_relaxed);   // even: only the host moves it
     warm_seq_.store(s0 + 1, std::memory_order_seq_cst);             // odd: the set is being written
-    warm_fmt_ = &f;
-    for (int i = 0; i < n; ++i) warm_blob_[i] = blobs[i];
-    warm_n_ = n;
+    warm_fmt_.store(&f, std::memory_order_relaxed);
+    for (int i = 0; i < n; ++i) warm_blob_[i].store(blobs[i], std::memory_order_relaxed);
+    warm_n_.store(n, std::memory_order_relaxed);
     warm_done_.store((uint64_t) (s0 + 2) << 32, std::memory_order_relaxed);
     warm_seq_.store(s0 + 2, std::memory_order_release);
     ++warm_posts;
@@ -1210,13 +1210,11 @@ void ExpertPool::warm_post(const NativeFmt& f, const uint8_t* const* blobs, int 
 // A parked worker loads (16 B loads: the dots read them next) its slice of each warm job's gate/up and down rows, the slice
 // native_rows gives it in the phase, in 8 KB chunks; a published batch or a newer warm set stops it.  A finished load counts in
 // warm_done_; only a set every worker finished is used as static.
-void ExpertPool::warm_run(int id, uint32_t epoch) {
-    const uint32_t seq = warm_seq_.load(std::memory_order_acquire);
-    if (seq & 1u) return;
-    const NativeFmt* const f = warm_fmt_;
-    const int n = (std::min)(warm_n_, kMaxWarm);
+void ExpertPool::warm_run(int id, uint32_t epoch, uint32_t seq) {
+    const NativeFmt* const f = warm_fmt_.load(std::memory_order_relaxed);
+    const int n = (std::min)(warm_n_.load(std::memory_order_relaxed), kMaxWarm);
     const uint8_t* blobs[kMaxWarm];
-    for (int i = 0; i < n; ++i) blobs[i] = warm_blob_[i];
+    for (int i = 0; i < n; ++i) blobs[i] = warm_blob_[i].load(std::memory_order_relaxed);
     std::atomic_thread_fence(std::memory_order_acquire);
     if (f == nullptr || warm_seq_.load(std::memory_order_relaxed) != seq) return;   // rewritten while read: the next set is the one
     __m128i acc = _mm_setzero_si128();
@@ -1463,7 +1461,7 @@ void ExpertPool::run_split_multi_native(const NativeFmt& f, ExpertJobMulti* jobs
     const auto t0 = std::chrono::steady_clock::now();
     // POOL-4: the jobs whose experts every worker has loaded (warm_post) go last, and each worker computes its own rows of them
     // (the rows it loaded); the others are split over the shared claims as before.  Only for jobs in this format.
-    const bool warm_set = warm_on_ && numa_n_ == 0 && warm_n_ > 0 && warm_fmt_ == &f &&
+    const bool warm_set = warm_on_ && numa_n_ == 0 && warm_n_.load(std::memory_order_relaxed) > 0 && warm_fmt_.load(std::memory_order_relaxed) == &f &&
                           warm_done_.load(std::memory_order_acquire) == (((uint64_t) warm_seq_.load(std::memory_order_acquire) << 32) | (uint32_t) n_) &&
                           !q2_native_kernels(f.gu_type) && !q2_native_kernels(f.d_type);
     int n_warm_all = 0;
@@ -1474,8 +1472,9 @@ void ExpertPool::run_split_multi_native(const NativeFmt& f, ExpertJobMulti* jobs
         if (warm_set) {
             auto is_warm = [&](const ExpertJobMulti& j) {
                 if (j.fmt != nullptr) return false;
-                for (int i = 0; i < warm_n_; ++i)
-                    if (warm_blob_[i] == j.blob) return true;
+                const int nw = warm_n_.load(std::memory_order_relaxed);
+                for (int i = 0; i < nw; ++i)
+                    if (warm_blob_[i].load(std::memory_order_relaxed) == j.blob) return true;
                 return false;
             };
             ExpertJobMulti* const p = std::partition(jobs + b0, jobs + b0 + nb, [&](const ExpertJobMulti& j) { return !is_warm(j); });
@@ -1515,7 +1514,7 @@ void ExpertPool::run_split_multi_native(const NativeFmt& f, ExpertJobMulti* jobs
         wc_bytes[k] += (int64_t) n * (int64_t) f.bytes;
         wc_ms[k] += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
         if (warm_set) ++warm_full;
-        warm_n_ = 0;   // the warm set belongs to the one layer it was posted for
+        warm_n_.store(0, std::memory_order_relaxed);   // (not a new set: the seq stays; the set belonged to the layer it was posted for)
     }
     mode_ = 0;
     ms_drain_ += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();

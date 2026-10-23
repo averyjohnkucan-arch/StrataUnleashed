@@ -324,8 +324,6 @@ on the `strata-q36` command line.
   host memory the GPU reads and writes in place instead of four copies per layer (each costs the stream 2-3 us). The same bytes.
 - **`--decode-swaps N`** (hybrid mode): how many experts move into VRAM slots every 32 decode tokens, over all layers (8 by
   default; the main path's `--adapt-swaps` counts another round, so the name differs).
-
-
 - **`--pool-warm K`** (hybrid mode with `--expert-prefetch P`; off by default; env alias `STRATA_Q36_POOL_WARM=K`) and **`--prefetch-copies 0|1`** (0 keeps the lookahead and drops the PCIe copies; env alias `STRATA_Q36_PREFETCH_COPIES`): the router lookahead that feeds the prefetch also names the next layer's
   likely experts. The K best that have no VRAM slot and no copy are posted to the CPU pool: its parked workers load, into their own caches, the rows they will compute
   (the same row split by worker id), and when the layer's real call comes a warmed expert's rows go to the worker that loaded them. A warm call of one expert takes about

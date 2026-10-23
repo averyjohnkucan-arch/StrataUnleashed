@@ -5,6 +5,7 @@
 #include "strata/kernels/cpu/pool.hpp"
 #include "ggml.h"
 #include "ggml-cpu.h"
+#include <algorithm>
 #include <chrono>
 #include <cstdio>
 #include <cstring>
