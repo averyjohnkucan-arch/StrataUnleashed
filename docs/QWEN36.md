@@ -63,9 +63,17 @@ on an RTX 5080 with DDR5-6400 dual channel, two long agent sessions with a Qwen3
 - `--snapshots 2` in the config's `args` keeps two copies of the recurrent state per session (62.8 MiB each for Qwen3.6-35B-A3B),
   taken at the end of reading a prompt of 4,096 tokens or more (`--snapshot-min N`): a prompt that parts from the held tokens after
   one restores it and reads only the rest.
-- `--snapshot-host` (with `--snapshots K`) keeps the snapshots in pinned host memory instead of VRAM: the card holds 126 MiB less
-  at K = 2 (about 1.7 more expert slots per layer), a snapshot is a 63 MiB copy to the host (a few ms) and a restore a copy
-  back. The restored state is the same bytes.
+- `--snapshot-host` (with `--snapshots K`; it says so when K is missing) keeps the snapshots in pinned host memory instead of VRAM, so the
+  expert slots get K x 62.8 MiB. A snapshot is then a copy to the host and a restore a copy back; the restored bytes are the same.
+  RTX 5080 16 GB, PCIe 5.0 x16, `--max-context 262144 --kv int8`, one snapshot of 62.8 MiB: 1.6 ms to the host and 1.2 ms back (0.15 ms
+  and 0.16 ms in VRAM). With `--snapshots 2` the cache slots per layer went from 80 to 82, and forced-text decode (one run each,
+  prompts of 4K / 16K / 40K, `--mtp 0`) from 194.8 / 171.0 / 183.2 to 196.2 / 172.2 / 184.4 tok/s (+0.7% each; the run-to-run noise is under
+  1%); prompt speed did not change.
+- **The CPU half's buffers.** The rows the CPU pool computes (`hybrid_t`, 128 by default) have their buffers sized for those rows, not for
+  a whole prompt chunk: 8 MiB of VRAM instead of 128 MiB at `--prefill 2048`. The room goes to the expert slots, so the default slot count
+  rises: 78 -> 80 cache slots per layer on the RTX 5080 at 262,144 cells, int8 K / V, `--snapshots 2`, `--expert-prefetch 2`, with the same
+  headroom left (the log says "VRAM left after the experts' buffers"). Forced-text decode 193.1 / 169.7 / 183.0 -> 194.8 / 171.0 / 183.2 tok/s
+  at 4K / 16K / 40K (one run each, noise under 1%). `--expert-vram` is not changed by it.
 
 `STRATA_REUSE_DIAG=1` (off by default: it logs a few of the conversation's tokens) makes the engine log the token where a prompt parts
 from a session's held tokens, and the server say it in text.
@@ -245,7 +253,8 @@ on the `strata-q36` command line.
 Test settings: `STRATA_Q36_GQA_FROM=N` (the cell the grouped-query kernel takes over from; not with k8v4, which always uses it),
 `STRATA_Q36_CACHE_WINDOW=0/1` (the expert slots' rebalancing over a window of the recent routing, on with `--kv fp16`),
 `STRATA_Q36_SNAPSHOT_TEST=L[,J]` (`--tokens` mode: read L tokens, take a snapshot, read J others, restore it, read the rest; its
-logits against a plain read).
+logits against a plain read),
+`STRATA_Q36_PF_GEN_START=N` (with `--expert-prefetch`: the prefetch copies' counter starts at N, close to 2^31 to test its wrap).
 
 ## Not done / limits
 

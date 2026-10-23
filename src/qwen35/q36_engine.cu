@@ -1614,14 +1614,13 @@ struct Engine {
             for (Snap& sn : ss.snaps)
                 if (!d || sn.when < d->when) d = &sn;
         const auto& g = m->g;
+        const cudaMemcpyKind kind = snap_host ? cudaMemcpyDefault : cudaMemcpyDeviceToDevice;   // (host snapshots: by address)
         for (size_t l = 0; l < conv.size() && l < d->conv.size(); ++l) {
             if (!d->conv[l]) continue;
-            CK(cudaMemcpyAsync(d->conv[l], conv[l], (size_t) g.ssm_conv_channels * (g.ssm_d_conv - 1) * 4,
-                               cudaMemcpyDefault, st));
-            CK(cudaMemcpyAsync(d->S[l], S[l], (size_t) g.ssm_v_heads * g.ssm_state_size * g.ssm_state_size * 4,
-                               cudaMemcpyDefault, st));
+            CK(cudaMemcpyAsync(d->conv[l], conv[l], (size_t) g.ssm_conv_channels * (g.ssm_d_conv - 1) * 4, kind, st));
+            CK(cudaMemcpyAsync(d->S[l], S[l], (size_t) g.ssm_v_heads * g.ssm_state_size * g.ssm_state_size * 4, kind, st));
         }
-        CK(cudaMemcpyAsync(d->hlast, hlast, (size_t) g.n_embd * 4, cudaMemcpyDefault, st));
+        CK(cudaMemcpyAsync(d->hlast, hlast, (size_t) g.n_embd * 4, kind, st));
         CK(cudaStreamSynchronize(st));
         d->len = pos;
         d->rdelta = ss.rdelta;
@@ -1639,12 +1638,11 @@ struct Engine {
         const int64_t len = sn.len;
         // K and V cells: kv_cell() / kv_cell_v() (fp32, fp16, int8, or k8v4's int8 K + q4 V)
         const size_t cb = kv_cell(), row = (size_t) ctx * cb, cbv = kv_cell_v(), rowv = (size_t) ctx * cbv;
+        const cudaMemcpyKind kind = snap_host ? cudaMemcpyDefault : cudaMemcpyDeviceToDevice;
         for (size_t l = 0; l < b.conv.size(); ++l) {   // (the MTP block's index, past the layers, has a cache only)
             if (l < sn.conv.size() && sn.conv[l]) {
-                CK(cudaMemcpyAsync(b.conv[l], sn.conv[l], (size_t) g.ssm_conv_channels * (g.ssm_d_conv - 1) * 4,
-                                   cudaMemcpyDefault, st));
-                CK(cudaMemcpyAsync(b.S[l], sn.S[l], (size_t) g.ssm_v_heads * g.ssm_state_size * g.ssm_state_size * 4,
-                                   cudaMemcpyDefault, st));
+                CK(cudaMemcpyAsync(b.conv[l], sn.conv[l], (size_t) g.ssm_conv_channels * (g.ssm_d_conv - 1) * 4, kind, st));
+                CK(cudaMemcpyAsync(b.S[l], sn.S[l], (size_t) g.ssm_v_heads * g.ssm_state_size * g.ssm_state_size * 4, kind, st));
             }
             if (src != dst && a.kc[l]) {
                 CK(cudaMemcpy2DAsync(b.kc[l], row, a.kc[l], row, (size_t) len * cb, (size_t) g.n_head_kv,
@@ -1653,7 +1651,7 @@ struct Engine {
                                      cudaMemcpyDeviceToDevice, st));
             }
         }
-        CK(cudaMemcpyAsync(b.hlast, sn.hlast, (size_t) g.n_embd * 4, cudaMemcpyDefault, st));
+        CK(cudaMemcpyAsync(b.hlast, sn.hlast, (size_t) g.n_embd * 4, kind, st));
         CK(cudaStreamSynchronize(st));
         b.rdelta = sn.rdelta;
         b.imgs = sn.imgs;
@@ -3584,7 +3582,8 @@ bool place_experts(Model& m, Engine& E, double vram_gib, int threads, int hybrid
     // (the reserve used to hold the CPU half's device rows too, 128 MiB sized by tmax, so the headroom the log of 3443e37
     // had was 0.69 GiB of 7.62 free; they are counted here, by the rows that can reach them, and that room is given back
     // to the slots: the same headroom, a few more slots)
-    const size_t cpu_credit = (size_t) 128 << 20;
+    // (tmax rows of ecpu + d_miss, and only in the reserve-derived budget: --expert-vram names the experts' budget itself)
+    const size_t cpu_credit = vram_gib < 0 ? (size_t) E.tmax * m.top_k * ((size_t) g.n_embd + 1) * 4 : 0;
     size_t slot_bytes = budget2 + cpu_credit > staging + cpu_dev ? budget2 + cpu_credit - staging - cpu_dev : 0;
     if (slot_bytes + staging + ((size_t) 256 << 20) > fr) slot_bytes = fr > staging + ((size_t) 512 << 20) ? fr - staging - ((size_t) 512 << 20) : 0;
     // --expert-slots: that many per layer (tests: the same split with and without the MTP block)
@@ -4678,6 +4677,8 @@ int strata::qwen35::run(int argc, char** argv) {
     E.n_snaps = std::max(0, std::min(4, snapshots));
     E.snap_min = std::max<int64_t>(1, snapshot_min);
     E.snap_host = snapshot_host;
+    if (snapshot_host && E.n_snaps == 0)
+        std::fprintf(stderr, "strata-q36: --snapshot-host does nothing without --snapshots K\n");
     const char* snap_test = std::getenv("STRATA_Q36_SNAPSHOT_TEST");
     if (snap_test && !serve_mode) E.n_snaps = std::max(E.n_snaps, 1);
     if (chunk == 0) {
@@ -4848,9 +4849,14 @@ int strata::qwen35::run(int argc, char** argv) {
             return 2;
         }
         E.process(prompt.data(), L, [](int64_t) {});
+        const auto ts0 = Clock::now();
         E.snapshot();
+        const double snap_ms = ms_since(ts0);
         if (J > 0) E.process(prompt.data(), J, [](int64_t) {});
+        const auto tr0 = Clock::now();
         E.restore(E.cur, 0, E.cur);
+        std::fprintf(stderr, "strata-q36: snapshot test: one snapshot %.2f ms, one restore %.2f ms (%s)\n", snap_ms, ms_since(tr0),
+                     E.snap_host ? "host" : "VRAM");
         E.process(prompt.data() + L, (int64_t) prompt.size() - L, [](int64_t) {});
         std::fprintf(stderr, "strata-q36: snapshot test: %lld tokens, a snapshot, %lld other tokens, the snapshot restored, "
                      "the prompt's other %lld tokens\n", (long long) L, (long long) J, (long long) prompt.size() - L);
