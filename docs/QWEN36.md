@@ -203,6 +203,12 @@ mixer kernel that reads them: the same kernels on the same inputs, so every bit 
 text identical, `STRATA_Q36_VERIFY=1` 0 mismatches). Not used with decode graphs or prompt chunks. `STRATA_Q36_NO_SIDE=1` keeps one stream.
 RTX 5080 16 GB, Sage-A1.5 Q4_K_M, serving shape, `--mtp 0`, forced text, two interleaved runs each, side stream off -> on: 4K 199.9 -> 202.4 tok/s
 (+1.2%), 16K 173.5 -> 176.0 (+1.4%), 40K 190.1 -> 192.5 (+1.3%).
+The gain depends on the stream priority: with equal priorities (a GPU or driver with one priority level) it measured +0.3%, so the side stream is
+only used when the driver gives the stream a higher priority (CUDA `hi < lo`); it is off under HIP. It costs about 40 us of host time per token
+(the extra launches and four events per layer), so the host's lead over the GPU is smaller; the host-bound shapes (small CPU, many pool waits)
+may gain less or lose, and `STRATA_Q36_NO_SIDE=1` restores the single stream. At 16K one off-run read 166.1 tok/s (GPU share 70.9%): the
+expert prefetch's timing moved that run, not the side stream; the table above is the other runs. `STRATA_Q36_SIDE_SKEW=<us>` /
+`STRATA_Q36_SIDE_SKEW_JOIN=<us>` (tests) add a spin kernel before the side stream's first kernel / before the join wait.
 
 **Prompt chunk (the default changed).** The MoE prompt kernels read every expert once per chunk, so a bigger chunk feeds them more rows per
 expert: R9700 pp4096 at chunk 512 / 1024 / 2048 / 4096 = 3,453 / 4,786 / 5,766 / 6,223 tok/s. With every expert in VRAM the engine now takes the
