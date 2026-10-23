@@ -325,6 +325,10 @@ on the `strata-q36` command line.
 - **`--decode-swaps N`** (hybrid mode): how many experts move into VRAM slots every 32 decode tokens, over all layers (8 by
   default; the main path's `--adapt-swaps` counts another round, so the name differs).
 
+In the hybrid mode the engine's exit report has a second line, `strata-q36: pool: ...`: per layer call that had CPU experts, the host plan,
+the gate/up rows, the h quantization and the down rows in us, the expert bytes read, GB/s over the two row phases, and per phase the wait for
+the workers to park before and after and the drain (a qwen35 Sage Q4_K_M at 4K, `--mtp 0`: 50 us and 4.0 MB per call, 82-83 GB/s).
+
 Test settings: `STRATA_Q36_ATTN_OLD=1` (the first int8 attention kernel, `part_q8`), `STRATA_Q36_ATTN_ROWS=n` (at most n window rows a block),
 `STRATA_Q36_GQA_FROM=N` (the cell the grouped-query kernel takes over from; not with k8v4, which always uses it),
 `STRATA_Q36_CACHE_WINDOW=0/1` (the expert slots' rebalancing over a window of the recent routing, on with `--kv fp16`),
