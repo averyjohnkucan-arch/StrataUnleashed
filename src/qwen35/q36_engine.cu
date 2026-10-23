@@ -2686,7 +2686,9 @@ struct Engine {
             const int64_t maxr = hpin[10];
             const uint8_t* wbase = lhy(li) ? stream_take((int) li) : L.blobs;
             // each token's row once, written to its Kp sorted rows (rinv: entry -> sorted row): the bytes of quantizing per entry
-            MMQ::quantize_scatter(h, rinv, ent_tok, mq_x, L.L.gu_type, N, N, T, Kp, st);
+            // (NVFP4 w4a4 activations carry a per-row scale the scatter does not write: quantize() refuses them without one)
+            if (MMQ::fp4_activations(L.L.gu_type)) MMQ::quantize(h, ent_tok, mq_x, L.L.gu_type, N, N, n_ent, st);
+            else MMQ::quantize_scatter(h, rinv, ent_tok, mq_x, L.L.gu_type, N, N, T, Kp, st);
             MMQ::Product gu;
             gu.w = wbase; gu.type = L.L.gu_type; gu.w_rows = 2 * FF; gu.w_cols = N; gu.expert_bytes = L.stride;
             gu.n = ne; gu.xq = mq_x; gu.bounds = rbounds; gu.ids = ident; gu.total_rows = n_ent; gu.max_rows = maxr;
@@ -4049,10 +4051,16 @@ bool place_experts(Model& m, Engine& E, double vram_gib, int threads, int hybrid
     E.acts = (uint8_t*) std::malloc(T * C::kNativeActBytes + 64);
     CK(cudaEventCreateWithFlags(&E.ev_route, cudaEventDisableTiming));
     if (staging) {
-        int prio_lo = 0, prio_hi = 0;
-        if (cudaDeviceGetStreamPriorityRange(&prio_lo, &prio_hi) != cudaSuccess) { cudaGetLastError(); prio_hi = 0; }   // (no priorities: a plain stream)
         CK(cudaStreamCreateWithFlags(&E.cst, cudaStreamNonBlocking));
-        CK(cudaStreamCreateWithPriority(&E.dst2, cudaStreamNonBlocking, prio_hi));   // the resident experts' copies (kernels, see stream_kick)
+#if !defined(STRATA_USE_HIP) && !defined(STRATA_HIP_GFX906) && !defined(__HIPCC__)   // (HIP: the default priority, as mtp.cpp)
+        {   // the resident experts' copies (kernels, see stream_kick) at the highest priority
+            int prio_lo = 0, prio_hi = 0;
+            if (cudaDeviceGetStreamPriorityRange(&prio_lo, &prio_hi) != cudaSuccess) { cudaGetLastError(); prio_hi = 0; }   // (no priorities: a plain stream)
+            CK(cudaStreamCreateWithPriority(&E.dst2, cudaStreamNonBlocking, prio_hi));
+        }
+#else
+        CK(cudaStreamCreateWithFlags(&E.dst2, cudaStreamNonBlocking));
+#endif
         for (int b = 0; b < 2; ++b) {
             CK(cudaEventCreateWithFlags(&E.ev_d2d[b], cudaEventDisableTiming));
             CK(cudaMalloc(&E.stage[b], max_layer + kMmqTail));
