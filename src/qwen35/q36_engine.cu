@@ -1559,6 +1559,7 @@ struct Engine {
             long long last_ref = -1;   // the forward (pf_fwd) whose plan last read it
         };
         std::vector<PfSlot> pf;
+        std::vector<char> pend_s, pend_x;   // --async-swaps: a regular slot / an expert whose swap copy has not been taken yet
         int pf_next = 0;
         std::vector<int32_t> evicted;  // experts out of a prefetch slot, not yet out of the device table
         int32_t* flag_d = nullptr;     // device [P]: the landed copies' numbers
@@ -1593,6 +1594,24 @@ struct Engine {
     std::vector<int> stream_seq;   // the state indices a streamed forward visits, in order
     int stream_pos = 0;
     long long hy_cpu = 0, hy_gpu = 0, hy_swaps = 0;   // entries computed on the CPU / GPU, slot replacements
+    // --async-swaps: the rebalance's slot copies go to a copy stream (swst) into the slot of an expert that already left the
+    // table, in batches of kSwapBatch with an event each; an expert enters the host and device tables once its batch's event
+    // is done (swap_settle, at the start of a forward, when nothing is in flight), so a slot is never read before it landed
+    int async_mask = 0;   // bit 0: the decode rebalance's copies, bit 1: the after-prompt rebalance's (--async-swaps: both)
+    bool async_swaps = false, arena_pinned = false;
+    cudaStream_t swst = nullptr;
+    cudaEvent_t ev_swfence = nullptr;
+    struct SwapItem { int li, s, x; };
+    struct SwapBatch { cudaEvent_t ev; std::vector<SwapItem> items; };
+    static constexpr int kSwapBatch = 128;
+    std::deque<SwapBatch> swap_q;
+    std::vector<cudaEvent_t> swap_ev_free;
+    std::vector<SwapItem> sw_new;
+    long long sw_taken = 0, sw_batches = 0, chk_calls = 0, chk_bad = 0;
+    bool pf_check = std::getenv("STRATA_Q36_PF_CHECK") != nullptr;   // debug: the host's slot tables against the device's at every forward
+    // the rebalance calls' own cost (the log's "rebalance:" line): [0] decode / verify rows, [1] after a prompt read
+    long long rb_calls[2] = {0, 0}, rb_swaps[2] = {0, 0};
+    double rb_ms[2] = {0, 0};
     double hy_cpu_ms = 0, hy_plan_ms = 0;   // (hy_cpu_ms: the whole CPU half; hy_plan_ms: its host plan before the pool call)
     long long hy_layers = 0;                // layer calls with at least one pool entry
     // --expert-profile (the main path's file, include/strata/core/expert_cache.hpp; set before place_experts): each
@@ -1656,7 +1675,7 @@ struct Engine {
             rebalance(cache_window ? cache_swaps : decode_swaps);
         }
     }
-    void after_prompt() {
+    void after_prompt(int64_t n_tok = 0) {
         if (cache_window) {
             // a long prompt's counts cut to what decode's halving every kRebalanceEvery rows keeps (their order
             // kept), so that an answer's other routing can take slots within that window
@@ -1667,7 +1686,11 @@ struct Engine {
                 if (total > limit) for (double& v : H.score) v *= limit / total;
             }
         }
-        rebalance(hybrid_swaps_after_prompt);
+        // STRATA_Q36_AFTER_SWAPS_PER_KTOK=f (opt-in): at most f swaps per 1000 tokens just read, under the usual cap
+        static const double per_ktok = std::getenv("STRATA_Q36_AFTER_SWAPS_PER_KTOK") ? std::atof(std::getenv("STRATA_Q36_AFTER_SWAPS_PER_KTOK")) : 0.0;
+        int budget = hybrid_swaps_after_prompt;
+        if (per_ktok > 0 && n_tok > 0) budget = std::min<int>(budget, (int) std::ceil(per_ktok * (double) n_tok / 1000.0));
+        rebalance(budget, 1);
     }
 
     /// A cell of one KV head in the cache: fp32, fp16 (--kv f16) or q8_0 (--kv int8) values.
@@ -2442,6 +2465,10 @@ struct Engine {
         const int HK = (int) g.ssm_k_heads, HV = (int) g.ssm_v_heads, D = (int) g.ssm_state_size;
         const int C = (int) g.ssm_conv_channels;
         const int H = (int) g.n_head, HKV = (int) g.n_head_kv, HD = (int) g.head_dim;
+        if (li == 0 && (async_swaps || pf_check) && m->hybrid) {   // a new main forward: the swap copies that landed enter the tables
+            if (async_swaps) swap_settle();
+            if (pf_check) table_check();
+        }
         if (pf_slots && li == 0) {   // --expert-prefetch: a new main forward
             ++pf_fwd;
             pf_used = 0;
@@ -3127,11 +3154,98 @@ struct Engine {
             H.slot_of[(size_t) q.x] = S + (int) p;
         }
     }
+    /// --async-swaps: the swaps rebalance chose (sw_new): the copies on swst after the table with the victims gone is on the
+    /// device (the fence), in batches, each with an event
+    void swap_issue() {
+        if (sw_new.empty()) return;
+        CK(cudaEventRecord(ev_swfence, st));
+        CK(cudaStreamWaitEvent(swst, ev_swfence, 0));
+        for (size_t i = 0; i < sw_new.size(); i += kSwapBatch) {
+            SwapBatch b;
+            const size_t e = std::min(sw_new.size(), i + kSwapBatch);
+            for (size_t j = i; j < e; ++j) {
+                const SwapItem& it = sw_new[j];
+                const Layer& L = layer_at(it.li);
+                CK(cudaMemcpyAsync(L.blobs + (size_t) it.s * L.stride, L.hblobs + (size_t) it.x * L.stride, L.L.bytes,
+                                   cudaMemcpyHostToDevice, swst));
+                b.items.push_back(it);
+            }
+            if (swap_ev_free.empty()) {
+                cudaEvent_t ev;
+                CK(cudaEventCreateWithFlags(&ev, cudaEventDisableTiming));
+                swap_ev_free.push_back(ev);
+            }
+            b.ev = swap_ev_free.back();
+            swap_ev_free.pop_back();
+            CK(cudaEventRecord(b.ev, swst));
+            swap_q.push_back(std::move(b));
+            ++sw_batches;
+        }
+        sw_new.clear();
+    }
+    /// ... and at the start of a forward (nothing in flight): the batches whose event is done enter the tables
+    void swap_settle() {
+        if (swap_q.empty()) return;
+        std::vector<char> dirty(hy.size(), 0);
+        while (!swap_q.empty()) {
+            SwapBatch& b = swap_q.front();
+            if (cudaEventQuery(b.ev) != cudaSuccess) {
+                (void) cudaGetLastError();
+                break;
+            }
+            for (const SwapItem& it : b.items) {
+                Hy& H = hy[(size_t) it.li];
+                const int S = layer_at(it.li).n_slots;
+                if (H.slot_of[(size_t) it.x] >= S) {   // it was served from a prefetch slot: that slot is free again
+                    H.pf[(size_t) (H.slot_of[(size_t) it.x] - S)].state = 0;
+                    H.pf[(size_t) (H.slot_of[(size_t) it.x] - S)].x = -1;
+                }
+                H.slot_of[(size_t) it.x] = it.s;
+                H.pend_s[(size_t) it.s] = 0;
+                H.pend_x[(size_t) it.x] = 0;
+                dirty[(size_t) it.li] = 1;
+                ++sw_taken;
+            }
+            swap_ev_free.push_back(b.ev);
+            swap_q.pop_front();
+        }
+        const int64_t ne = m->g.n_expert;
+        for (size_t li = 0; li < hy.size(); ++li)
+            if (dirty[li]) {
+                CK(cudaMemcpyAsync(hy[li].slot_of_d, hy[li].slot_of.data(), (size_t) ne * 4, cudaMemcpyHostToDevice, st));
+                hy[li].evicted.clear();   // the whole table went up
+            }
+    }
+    /// STRATA_Q36_PF_CHECK=1 (debug): the device slot tables against the host's, and the host's against its slot bookkeeping
+    void table_check() {
+        CK(cudaStreamSynchronize(st));
+        const int64_t ne = m->g.n_expert;
+        std::vector<int32_t> d((size_t) ne);
+        ++chk_calls;
+        for (size_t li = 0; li < hy.size(); ++li) {
+            const Hy& H = hy[li];
+            if (!H.slot_of_d) continue;
+            const int S = layer_at((int) li).n_slots;
+            CK(cudaMemcpy(d.data(), H.slot_of_d, (size_t) ne * 4, cudaMemcpyDeviceToHost));
+            for (int x = 0; x < ne; ++x) {
+                const int hs = H.slot_of[(size_t) x];
+                bool bad = d[(size_t) x] != hs;
+                if (!bad && hs >= 0 && hs < S) bad = H.exp_in_slot[(size_t) hs] != x || (async_swaps && H.pend_s[(size_t) hs]);
+                if (!bad && hs >= S) bad = (size_t) (hs - S) >= H.pf.size() || H.pf[(size_t) (hs - S)].x != x;
+                if (bad && ++chk_bad <= 5)
+                    std::fprintf(stderr, "strata-q36 table check: state %zu expert %d: host slot %d, device slot %d\n", li, x, hs,
+                                 d[(size_t) x]);
+            }
+        }
+    }
     /// The slots to the experts the routing used most (the counts halved each time): at most max_swaps replacements
     /// over all layers, between forwards (the copies are on the engine's stream).
-    void rebalance(int max_swaps) {
+    void rebalance(int max_swaps, int kind = 0) {
         static const bool off = std::getenv("STRATA_Q36_FIXED_SLOTS") != nullptr;   // the slots as placed (tests)
         if (!m->hybrid || off || warming) return;
+        const auto rb_t0 = Clock::now();
+        const long long rb_s0 = hy_swaps;
+        const bool as = async_swaps && ((async_mask >> kind) & 1);
         const int64_t ne = m->g.n_expert;
         int left = max_swaps;
         // the history window (#3641): the budget's first layer rotates, and the layers past it still halve their counts
@@ -3164,13 +3278,25 @@ struct Engine {
             for (int i = 0; i < S && left > 0; ++i) {
                 const int x = order[(size_t) i];
                 if (H.slot_of[(size_t) x] >= 0 && H.slot_of[(size_t) x] < S) continue;
+                if (H.pend_x[(size_t) x]) continue;   // its copy is on the way (--async-swaps)
                 while (vi < victims.size()) {
                     const int s = victims[vi];
+                    if (H.pend_s[(size_t) s]) { ++vi; continue; }   // a copy is on the way into it
                     const int y = H.exp_in_slot[(size_t) s];
                     if (H.score[(size_t) y] >= H.score[(size_t) x]) { vi = victims.size(); break; }
                     // y must not be in the top S itself
                     ++vi;
                     H.slot_of[(size_t) y] = -1;
+                    if (as) {   // x enters the tables when its copy has landed (swap_settle); y is out of them now
+                        H.exp_in_slot[(size_t) s] = x;
+                        H.pend_s[(size_t) s] = 1;
+                        H.pend_x[(size_t) x] = 1;
+                        sw_new.push_back({(int) li, s, x});
+                        --left;
+                        ++hy_swaps;
+                        changed = true;
+                        break;
+                    }
                     if (H.slot_of[(size_t) x] >= S) {   // promoted from a prefetch slot: that slot is free again
                         H.pf[(size_t) (H.slot_of[(size_t) x] - S)].state = 0;
                         H.pf[(size_t) (H.slot_of[(size_t) x] - S)].x = -1;
@@ -3194,7 +3320,13 @@ struct Engine {
             if (cache_window && left < before) next = (li + 1) % hy.size();
         }
         if (cache_window) rebalance_cursor = next;
+        if (as) {
+            swap_issue();
+        } else
         CK(cudaStreamSynchronize(st));   // slot_of's host copy is pageable: the upload is done before it changes
+        ++rb_calls[kind];
+        rb_swaps[kind] += hy_swaps - rb_s0;
+        rb_ms[kind] += ms_since(rb_t0);
     }
 
     void shrink_att(size_t floats) {
@@ -3337,11 +3469,11 @@ struct Engine {
             mtab_now = nullptr;
             map_on = false;
             if (!on_chunk(i + T)) {
-                if (m->hybrid) after_prompt();
+                if (m->hybrid) after_prompt(n);
                 return i + T;
             }
         }
-        if (m->hybrid) after_prompt();
+        if (m->hybrid) after_prompt(n);
         return n;
     }
 
@@ -3699,6 +3831,8 @@ struct Engine {
             std::fill(H.heat.begin(), H.heat.end(), 0.0);
         }
         hy_cpu = hy_gpu = hy_swaps = 0;
+        rb_calls[0] = rb_calls[1] = rb_swaps[0] = rb_swaps[1] = 0;
+        rb_ms[0] = rb_ms[1] = 0;
         hy_cpu_ms = hy_plan_ms = 0;
         hy_layers = 0;
 #if defined(STRATA_Q36_CPU_POOL)
@@ -3978,6 +4112,11 @@ bool place_experts(Model& m, Engine& E, double vram_gib, int threads, int hybrid
             return false;
         }
     }
+    E.arena_pinned = pinned;
+    if (E.async_swaps && !pinned) {
+        std::fprintf(stderr, "strata-q36: --async-swaps needs the pinned expert copy; off\n");
+        E.async_swaps = false;
+    }
     if (P > 0 && !pinned) {   // the prefetch copies need the pinned host copy: its slots stay cache slots
         std::fprintf(stderr, "strata-q36: --expert-prefetch needs the pinned expert copy; off\n");
         S += P;
@@ -4048,6 +4187,8 @@ bool place_experts(Model& m, Engine& E, double vram_gib, int threads, int hybrid
             H.exp_in_slot[(size_t) s] = first[(size_t) s];
         }
         H.score.assign((size_t) ne, 0.0);
+        H.pend_s.assign((size_t) std::max(S, 0), 0);
+        H.pend_x.assign((size_t) ne, 0);
         H.heat.assign((size_t) ne, 0.0);
         H.pf.assign((size_t) Pl, Engine::Hy::PfSlot{});
         if (Pl > 0) {
@@ -4094,6 +4235,10 @@ bool place_experts(Model& m, Engine& E, double vram_gib, int threads, int hybrid
             CK(cudaEventCreateWithFlags(&E.ev_used[b], cudaEventDisableTiming));
             CK(cudaEventRecord(E.ev_used[b], E.st));
         }
+    }
+    if (E.async_swaps) {
+        CK(cudaStreamCreateWithFlags(&E.swst, cudaStreamNonBlocking));
+        CK(cudaEventCreateWithFlags(&E.ev_swfence, cudaEventDisableTiming));
     }
     E.pool = std::make_unique<C::ExpertPool>(threads);
     {   // the flag, else the env alias, else the default (kPrefetchCopiesDefault)
@@ -4959,7 +5104,7 @@ int strata::qwen35::run(int argc, char** argv) {
     bool serve_mode = false, graph = true, vision = false, batch_mtp = false;
     // the opt-ins of this engine path (docs/QWEN36.md): off, they leave the default path as it was
     std::string kv = "fp32", tokens_file, expert_profile, expert_profile_save;
-    bool gqa_attn = false, zero_copy = false, snapshot_host = false, fused_pattn = false, chunked_gdn = false, fused_pattn_i8 = false, attn_mma = false;
+    bool gqa_attn = false, zero_copy = false, snapshot_host = false, fused_pattn = false, chunked_gdn = false, fused_pattn_i8 = false, attn_mma = false, async_swaps = false, async_after = false;
     int expert_prefetch = 0, decode_swaps = -1, snapshots = 0, pool_warm = -1, prefetch_copies = -1;
     int64_t snapshot_min = 4096;
     for (int i = 1; i < argc; ++i) {
@@ -5036,6 +5181,8 @@ int strata::qwen35::run(int argc, char** argv) {
         else if (a == "--decode-swaps") decode_swaps = std::atoi(next().c_str());   // the hybrid slots' swaps per 32 tokens
         else if (a == "--snapshots") snapshots = std::atoi(next().c_str());       // recurrent-state snapshots per session
         else if (a == "--snapshot-min") snapshot_min = std::atoll(next().c_str());
+        else if (a == "--async-swaps") async_swaps = true;   // the decode slot swaps' copies off the engine stream
+        else if (a == "--async-after-prompt") async_after = true;   // ... and the after-prompt ones
         else if (a == "--snapshot-host") snapshot_host = true;   // the snapshots in pinned host memory: more expert slots
         else if (serve_mode && a.rfind("--", 0) == 0) {
             // serve passes the config's args plus a few of its own: one this engine does not have is said and skipped
@@ -5050,7 +5197,7 @@ int strata::qwen35::run(int argc, char** argv) {
                          "       (--serve | --tokens IDS | --tokens-file F [--n 64] [--force IDS] [--dump-full-logits F] | "
                          "--bench-pp N --bench-tg N)\n"
                          "       opt-ins (docs/QWEN36.md): [--kv fp32|fp16|int8|k8v4] [--gqa-attn] [--attn-mma] [--fused-prompt-attn[-i8]] [--chunked-gdn] [--mtp-sampled off|match|q]\n"
-                         "       [--spec-min-p P] [--snapshots K] [--snapshot-min N] [--snapshot-host] [--expert-profile F] [--expert-profile-save F]\n"
+                         "       [--spec-min-p P] [--snapshots K] [--snapshot-min N] [--snapshot-host] [--async-swaps] [--async-after-prompt] [--expert-profile F] [--expert-profile-save F]\n"
                          "       [--expert-prefetch P] [--prefetch-copies 0|1] [--pool-warm K | --no-pool-warm] [--hybrid-zero-copy] [--decode-swaps N] [--sample-gpu] [--random-seed]\n");
             return 2;
         }
@@ -5113,6 +5260,11 @@ int strata::qwen35::run(int argc, char** argv) {
     E.n_snaps = std::max(0, std::min(4, snapshots));
     E.snap_min = std::max<int64_t>(1, snapshot_min);
     E.snap_host = snapshot_host;
+    // --async-swaps: the decode rebalance's copies; --async-after-prompt: the after-prompt rebalance's too;
+    // STRATA_Q36_ASYNC_SWAPS=1 / 2 / 3 sets the two bits (tests)
+    E.async_mask = (async_swaps ? 1 : 0) | (async_after ? 2 : 0) |
+                   (std::getenv("STRATA_Q36_ASYNC_SWAPS") ? std::atoi(std::getenv("STRATA_Q36_ASYNC_SWAPS")) & 3 : 0);
+    E.async_swaps = E.async_mask != 0;
     if (snapshot_host && E.n_snaps == 0)
         std::fprintf(stderr, "strata-q36: --snapshot-host does nothing without --snapshots K\n");
     const char* snap_test = std::getenv("STRATA_Q36_SNAPSHOT_TEST");
@@ -5233,6 +5385,13 @@ int strata::qwen35::run(int argc, char** argv) {
                                      (double) P.wc_bytes[k] / 1e6 / std::max(1e-9, P.wc_ms[k]));
             }
 #endif
+            std::fprintf(stderr, "strata-q36: rebalance: decode %lld calls, %lld swaps, %.1f ms; after prompts %lld calls, %lld swaps, "
+                         "%.1f ms\n", E.rb_calls[0], E.rb_swaps[0], E.rb_ms[0], E.rb_calls[1], E.rb_swaps[1], E.rb_ms[1]);
+            if (E.async_swaps)
+                std::fprintf(stderr, "strata-q36: async swaps: %lld copies in %lld batches, %lld taken into the tables, %zu still pending\n",
+                             E.hy_swaps, E.sw_batches, E.sw_taken, E.swap_q.size());
+            if (E.pf_check)
+                std::fprintf(stderr, "strata-q36: table check: %lld forwards compared, %lld mismatches\n", E.chk_calls, E.chk_bad);
             if (E.pf_slots)
                 std::fprintf(stderr, "strata-q36: prefetch: %lld predictions, %lld copies, %lld entries hit a prefetch slot, "
                              "%lld routings found a copy still in flight\n", E.pf_preds, E.pf_copies, E.pf_hits, E.pf_late);

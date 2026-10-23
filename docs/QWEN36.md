@@ -309,6 +309,11 @@ on the `strata-q36` command line.
   `STRATA_SPEC_MIN_TEMP`; other sampled requests use `match`. With `--draft-vocab N` the drafts come from the first N ids, and the
   penalties apply to the ids the draft row has.
 - **`--snapshot-host`**: the snapshots of `--snapshots K` in pinned host memory (see below).
+- **`--async-swaps`**, **`--async-after-prompt`**: the expert slots' swaps (every 32 decode rows, `--decode-swaps`; and after a prompt read, up to
+  2048) copy on a copy stream instead of stopping the engine stream and the host, into the slot of an expert that already left the table;
+  the new expert enters the tables only once its copy has landed (checked at the start of the next forward), so no slot is read before its
+  bytes arrived. `--async-swaps` takes the decode ones, `--async-after-prompt` the after-prompt ones too (see "Slot swaps" below). They need
+  the pinned expert copy.
 - **`--snapshots K`**, **`--snapshot-min N`**: see "A conversation that parts from the held tokens" (K up to 4).
 - **`--expert-profile F`**, **`--expert-profile-save F`** (the main path's names and file format, `tools/make_profile.py`): in the
   hybrid mode each layer's first expert slots take its most-routed experts from F instead of experts 0 .. S - 1, and at the engine's
@@ -333,6 +338,16 @@ on the `strata-q36` command line.
   16K 182.1 / 181.1, 40K 189.5 / 188.5, against the production default (copies on, no warm-up) 193.4, 169.7, 183.1 (+5%, +7%, +3%).
   With `--mtp 2` (greedy, free text, 4K / 40K): 250.8 / 251.3 and 218.3 / 218.7 against 243.3 / 235.7 and 210.7 / 201.4 (+5%, +6%). With the copies on, K=2 or 4 changes nothing (193.9 / 169.9 / 183.2).
 
+**Slot swaps.** The log's `rebalance:` line says how many calls, swaps and milliseconds the slot swaps took (RTX 5080, DDR5-6800, production
+flags, 256 forced tokens after a 4K / 16K / 40K prompt): decode 8 calls, 456 / 369 / 227 swaps, 20.8 / 16.7 / 10.8 ms (0.08 / 0.07 /
+0.04 ms per token, 1.5% / 1.2% / 0.8% of it); after the prompt 1100 / 990 / 960 swaps, 44.6 / 40.3 / 39.3 ms (about 40 us a swap).
+With `--async-swaps` the same decode calls take 2.0 / 2.4 / 2.8 ms of host time and forced-text decode goes 194.8 / 171.5 / 183.9 to
+196.6 / 172.1 / 184.5 tok/s (+0.9% / +0.4% / +0.3%; noise under 1%). `--async-after-prompt` takes the 40-45 ms out of the prompt read (pp4096
+5,609 to 5,937 tok/s) but the 1,000 experts then arrive over the next tokens, and decode of the next 256 tokens is 1.2-1.4% slower: it pays
+when the answer is shorter than about 600 tokens. A bigger `--decode-swaps` (128, 256) raises the GPU share (4K: 86.5 / 86.8 / 87.3%) but not the speed,
+with or without `--async-swaps`.
+`STRATA_Q36_AFTER_SWAPS_PER_KTOK=f` limits the after-prompt swaps to f per 1000 tokens read (default: no limit below 2048).
+
 In the hybrid mode the engine's exit report has a second line, `strata-q36: pool: ...`. For each layer call that had CPU experts it gives the host plan, the
 gate/up rows, the h quantization and the down rows in us, the expert bytes read, and GB/s over the row phases (overall, and gate/up and down on their own).
 It also gives, per phase, the wait for the workers to park before and after and the drain.
@@ -345,7 +360,9 @@ Test settings: `STRATA_Q36_ATTN_OLD=1` (the first int8 attention kernel, `part_q
 `STRATA_Q36_CACHE_WINDOW=0/1` (the expert slots' rebalancing over a window of the recent routing, on with `--kv fp16`),
 `STRATA_Q36_SNAPSHOT_TEST=L[,J]` (`--tokens` mode: read L tokens, take a snapshot, read J others, restore it, read the rest; its
 logits against a plain read),
-`STRATA_Q36_PF_GEN_START=N` (with `--expert-prefetch`: the prefetch copies' counter starts at N, close to 2^31 to test its wrap).
+`STRATA_Q36_PF_GEN_START=N` (with `--expert-prefetch`: the prefetch copies' counter starts at N, close to 2^31 to test its wrap),
+`STRATA_Q36_PF_CHECK=1` (the host's slot tables against the device's at every forward, and the host's against its own bookkeeping; the log's
+`table check:` line counts the mismatches; it synchronizes the stream, so it is slow), `STRATA_Q36_ASYNC_SWAPS=1/2/3` (the two async bits, as the two flags).
 
 ## Not done / limits
 
