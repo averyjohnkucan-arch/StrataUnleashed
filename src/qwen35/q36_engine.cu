@@ -1148,6 +1148,7 @@ constexpr size_t kMmqTail = 4096;
 // the defaults of --pool-warm K and --prefetch-copies 0|1 (--no-pool-warm: K = 0; the envs STRATA_Q36_POOL_WARM / STRATA_Q36_PREFETCH_COPIES override
 // these, the flags override the envs).  Default-on needs the lookahead too (--expert-prefetch's default, now 0), or the warm-up posts nothing
 constexpr int kPoolWarmDefault = 0, kPrefetchCopiesDefault = 1;
+constexpr bool kLendDefault = false;   // --lend-staging on without the flag (--no-lend-staging turns it off): flipped after the stacked gate
 size_t gcd_sz(size_t a, size_t b) { return b ? gcd_sz(b, a % b) : a; }
 size_t lcm_sz(size_t a, size_t b) { return a / gcd_sz(a, b) * b; }
 size_t block_bytes(int type) {
@@ -1606,7 +1607,10 @@ struct Engine {
     // --lend-staging: the prompt staging buffers (idle in decode) hold lent_n more expert slots per layer, numbered from L.n_reg;
     // lend_evict() (the stream starts: staging is needed) takes them out of the tables with no copy, after the prompt the
     // rebalance fills them again (lend_active) by the routing counts, the profile's rank for an expert not routed yet
-    bool lend_on = false, lend_active = false, lend_prior = true;
+    bool lend_on = false, lend_active = false, lend_prior = true, lend_explicit = false;
+    bool lend_settle = false;   // STRATA_Q36_LEND_SETTLE=1: the sync rebalance's lent copies on the engine stream and the after-prompt wait (class B); else on the swap stream, taken in when they land (class C)
+    size_t stage_max_layer = 0;   // the staging buffers' used bytes (the zero tail follows), for the tail check
+    long long tail_checks = 0, tail_bad = 0;
     cudaEvent_t ev_lend = nullptr;
     long long lend_swaps = 0, lend_evicts = 0, lend_fills = 0;
     double lend_evict_ms = 0;
@@ -1705,6 +1709,10 @@ struct Engine {
         int budget = hybrid_swaps_after_prompt;
         if (per_ktok > 0 && n_tok > 0) budget = std::min<int>(budget, (int) std::ceil(per_ktok * (double) n_tok / 1000.0));
         rebalance(budget, 1);
+        if (lend_on && lend_settle && swst && !warming) {   // the lent slots are all in before the first decode forward
+            CK(cudaStreamSynchronize(swst));
+            swap_settle();
+        }
     }
 
     /// A cell of one KV head in the cache: fp32, fp16 (--kv f16) or q8_0 (--kv int8) values.
@@ -2858,6 +2866,18 @@ struct Engine {
     /// A streamed forward over the state indices `seq`: the first two layers' experts start copying now.
     void stream_begin(const std::vector<int>& seq) {
         lend_evict();   // --lend-staging: the staging buffers are needed
+        static const bool tail_check = std::getenv("STRATA_Q36_STAGE_TAIL_CHECK") != nullptr;   // debug: the zero tail MMQ reads past a layer
+        if (tail_check && stage[0] && stage_max_layer) {
+            CK(cudaStreamSynchronize(st));
+            CK(cudaStreamSynchronize(cst));
+            std::vector<uint8_t> t(kMmqTail);
+            for (int b = 0; b < 2; ++b) {
+                CK(cudaMemcpy(t.data(), stage[b] + stage_max_layer, kMmqTail, cudaMemcpyDeviceToHost));
+                ++tail_checks;
+                for (uint8_t v : t)
+                    if (v) { ++tail_bad; break; }
+            }
+        }
         stream_seq = seq;
         stream_pos = 0;
         for (int i = 0; i < 2 && i < (int) seq.size(); ++i) stream_kick(i);
@@ -3054,7 +3074,7 @@ struct Engine {
         ++pf_preds;
         for (int k = 0; k < ncand; ++k) {
             const int x = pf_order[(size_t) k];
-            if (H.slot_of[(size_t) x] >= 0 || pf_holds(H, x)) continue;   // resident, prefetched or on its way
+            if (H.slot_of[(size_t) x] >= 0 || pf_holds(H, x) || H.pend_x[(size_t) x]) continue;   // resident, prefetched, on its way (also into a cache or lent slot)
             const int p = pf_free(H);
             if (p < 0 || !pf_copy(H, L, p, x)) break;
         }
@@ -3274,7 +3294,7 @@ struct Engine {
                 while (k < H.prof_order.size() && H.slot_of[(size_t) H.prof_order[k]] >= 0) ++k;   // (never one that is resident)
                 if (k >= H.prof_order.size()) break;
                 const int x = H.prof_order[k++], s_ = L.n_reg + j;
-                CK(cudaMemcpyAsync(L.lent + (size_t) j * L.stride, L.hblobs + (size_t) x * L.stride, L.stride, cudaMemcpyHostToDevice, st));
+                CK(cudaMemcpyAsync(L.lent + (size_t) j * L.stride, L.hblobs + (size_t) x * L.stride, L.L.bytes, cudaMemcpyHostToDevice, st));
                 H.slot_of[(size_t) x] = s_;
                 H.exp_in_slot[(size_t) s_] = x;
                 ++lend_fills;
@@ -3393,7 +3413,7 @@ struct Engine {
                     ++vi;
                     if (y >= 0) H.slot_of[(size_t) y] = -1;
                     const bool lent_dst = s >= S + Pl;
-                    if (as || lent_dst) {   // x enters the tables when its copy has landed (swap_settle); y is out of them now
+                    if (as || (lent_dst && !lend_settle)) {   // x enters the tables when its copy has landed (swap_settle); y is out of them now
                         H.exp_in_slot[(size_t) s] = x;
                         H.pend_s[(size_t) s] = 1;
                         H.pend_x[(size_t) x] = 1;
@@ -3410,8 +3430,8 @@ struct Engine {
                     }
                     H.slot_of[(size_t) x] = s;
                     H.exp_in_slot[(size_t) s] = x;
-                    CK(cudaMemcpyAsync(L.blobs + (size_t) s * L.stride, L.hblobs + (size_t) x * L.stride, L.L.bytes,
-                                       cudaMemcpyHostToDevice, st));
+                    CK(cudaMemcpyAsync(L.slot_addr(s), L.hblobs + (size_t) x * L.stride, L.L.bytes, cudaMemcpyHostToDevice, st));
+                    if (lent_dst) ++lend_swaps;
                     --left;
                     ++hy_swaps;
                     changed = true;
@@ -4366,8 +4386,22 @@ bool place_experts(Model& m, Engine& E, double vram_gib, int threads, int hybrid
         std::fprintf(stderr, "strata-q36: --lend-staging needs the hybrid mode with prompt staging; off\n");
         E.lend_on = false;
     }
+    if (E.lend_on && E.n_sess > 1) {   // (not tested with several sessions)
+        std::fprintf(stderr, "strata-q36: --lend-staging is off with --batch %d (the sessions' windows stream prompts between decodes)\n", E.n_sess);
+        E.lend_on = false;
+    }
+    if (E.lend_on && !E.lend_explicit) {
+        int ndev = 1;
+        (void) cudaGetDeviceCount(&ndev);
+        if (ndev > 1) {   // (a second device was never tested with it: only on request)
+            std::fprintf(stderr, "strata-q36: lending the staging buffers is off with %d devices unless --lend-staging is given\n", ndev);
+            E.lend_on = false;
+        }
+    }
     if (E.lend_on) {   // the staging buffers' room as extra slots: n per layer, a layer's in one buffer, from the front
-        const size_t cap = max_layer + kMmqTail;
+        // (within max_layer: the kMmqTail zero bytes after the biggest layer's blobs stay as they were allocated)
+        const size_t cap = max_layer;
+        E.stage_max_layer = max_layer;
         int n = (int) ((2 * cap) / per_slot);
         std::vector<std::pair<int, size_t>> place;
         for (; n >= 1; --n) {
@@ -5274,7 +5308,8 @@ int strata::qwen35::run(int argc, char** argv) {
     bool serve_mode = false, graph = true, vision = false, batch_mtp = false;
     // the opt-ins of this engine path (docs/QWEN36.md): off, they leave the default path as it was
     std::string kv = "fp32", tokens_file, expert_profile, expert_profile_save;
-    bool gqa_attn = false, zero_copy = false, snapshot_host = false, fused_pattn = false, chunked_gdn = false, fused_pattn_i8 = false, attn_mma = false, async_swaps = false, async_after = false, lend_staging = false;
+    bool gqa_attn = false, zero_copy = false, snapshot_host = false, fused_pattn = false, chunked_gdn = false, fused_pattn_i8 = false, attn_mma = false, async_swaps = false, async_after = false;
+    bool lend_staging = kLendDefault, lend_set = false;
     int expert_prefetch = 0, decode_swaps = -1, snapshots = 0, pool_warm = -1, prefetch_copies = -1;
     int64_t snapshot_min = 4096;
     for (int i = 1; i < argc; ++i) {
@@ -5352,7 +5387,10 @@ int strata::qwen35::run(int argc, char** argv) {
         else if (a == "--snapshots") snapshots = std::atoi(next().c_str());       // recurrent-state snapshots per session
         else if (a == "--snapshot-min") snapshot_min = std::atoll(next().c_str());
         else if (a == "--async-swaps") async_swaps = true;   // the decode slot swaps' copies off the engine stream
-        else if (a == "--lend-staging") lend_staging = true;   // the prompt staging buffers as extra expert slots in decode
+        else if (a == "--lend-staging" || a == "--no-lend-staging") {   // the prompt staging buffers as extra expert slots in decode
+            lend_staging = a == "--lend-staging";
+            lend_set = true;
+        }
         else if (a == "--async-after-prompt") async_after = true;   // ... and the after-prompt ones
         else if (a == "--snapshot-host") snapshot_host = true;   // the snapshots in pinned host memory: more expert slots
         else if (serve_mode && a.rfind("--", 0) == 0) {
@@ -5368,7 +5406,8 @@ int strata::qwen35::run(int argc, char** argv) {
                          "       (--serve | --tokens IDS | --tokens-file F [--n 64] [--force IDS] [--dump-full-logits F] | "
                          "--bench-pp N --bench-tg N)\n"
                          "       opt-ins (docs/QWEN36.md): [--kv fp32|fp16|int8|k8v4] [--gqa-attn] [--attn-mma] [--fused-prompt-attn[-i8]] [--chunked-gdn] [--mtp-sampled off|match|q]\n"
-                         "       [--spec-min-p P] [--snapshots K] [--snapshot-min N] [--snapshot-host] [--async-swaps] [--async-after-prompt] [--lend-staging] [--expert-profile F] [--expert-profile-save F]\n"
+                         "       [--spec-min-p P] [--snapshots K] [--snapshot-min N] [--snapshot-host] [--async-swaps]\n"
+                         "       [--async-after-prompt] [--lend-staging | --no-lend-staging] [--expert-profile F] [--expert-profile-save F]\n"
                          "       [--expert-prefetch P] [--prefetch-copies 0|1] [--pool-warm K | --no-pool-warm] [--hybrid-zero-copy] [--decode-swaps N] [--sample-gpu] [--random-seed]\n");
             return 2;
         }
@@ -5434,6 +5473,8 @@ int strata::qwen35::run(int argc, char** argv) {
     // --async-swaps: the decode rebalance's copies; --async-after-prompt: the after-prompt rebalance's too;
     // STRATA_Q36_ASYNC_SWAPS=1 / 2 / 3 sets the two bits (tests)
     E.lend_on = lend_staging;
+    E.lend_explicit = lend_set;
+    if (const char* ls = std::getenv("STRATA_Q36_LEND_SETTLE")) E.lend_settle = std::atoi(ls) != 0;   // 1: all lent copies settled before the first decode forward
     if (const char* lp = std::getenv("STRATA_Q36_LEND_PRIOR")) E.lend_prior = std::atoi(lp) != 0;   // 0: the counts only (tests)
     E.async_mask = (async_swaps ? 1 : 0) | (async_after ? 2 : 0) |
                    (std::getenv("STRATA_Q36_ASYNC_SWAPS") ? std::atoi(std::getenv("STRATA_Q36_ASYNC_SWAPS")) & 3 : 0);
@@ -5560,9 +5601,12 @@ int strata::qwen35::run(int argc, char** argv) {
 #endif
             std::fprintf(stderr, "strata-q36: rebalance: decode %lld calls, %lld swaps, %.1f ms; after prompts %lld calls, %lld swaps, "
                          "%.1f ms\n", E.rb_calls[0], E.rb_swaps[0], E.rb_ms[0], E.rb_calls[1], E.rb_swaps[1], E.rb_ms[1]);
-            if (E.lend_on)
+            if (E.lend_on) {
                 std::fprintf(stderr, "strata-q36: lent slots: %lld evictions for the prompt stream (%.1f ms in all), %lld profile fills, %lld swaps into lent slots\n",
                              E.lend_evicts, E.lend_evict_ms, E.lend_fills, E.lend_swaps);
+                if (E.tail_checks)
+                    std::fprintf(stderr, "strata-q36: staging tail check: %lld tails read, %lld not zero\n", E.tail_checks, E.tail_bad);
+            }
             if (E.async_swaps)
                 std::fprintf(stderr, "strata-q36: async swaps: %lld copies in %lld batches, %lld taken into the tables, %zu still pending\n",
                              E.hy_swaps, E.sw_batches, E.sw_taken, E.swap_q.size());
