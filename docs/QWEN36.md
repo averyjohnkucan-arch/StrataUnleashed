@@ -225,6 +225,17 @@ on the `strata-q36` command line.
   each cache cell once for all its query heads (the default kernel reads it once per query head). fp32 switches to it from 8,192
   cells, int8 at every cell: with the int8 cache (a Qwen3.6-35B-A3B fine-tune (Q4_K_M), RTX 5080) it decodes at 184 tok/s (the default kernel 179) at 4K and 165
   (155) at 8K.
+- **`--fused-prompt-attn`** (the int8 cache, CUDA): a prompt chunk of more than 8 rows runs its attention in one kernel straight
+  from the int8 cells (`q36_pattn.cuh`): a block takes one KV head and 8 tokens x 8 query heads, dequantises 32 cells at a time into
+  shared memory, multiplies on the FP16 tensor cores (`mma.sync`, FP32 sums), keeps the softmax online in registers and splits the
+  cells over blocks when the chunk is small (flash-decoding). The default path converts the whole cache to FP16 for every chunk
+  and layer and writes the FP32 scores and FP16 probabilities of each slice to memory and back (at 262K cells a slice holds 16
+  query rows). With the flag the FP16 K / V copies and the score buffers (0.92 GiB at 262K) are not allocated: the experts get
+  12 more slots per layer (78 -> 90). The sums run in another order, so it is not bit-equal to the default path (class B: KL
+  against the default path in the range of the other opt-ins, see NOTES-pattn.md). `q36_pattn_parity` checks it against a
+  double-precision oracle next to the default path. Measurements (RTX 5080, Sage-A1.5 Q4_K_M, 262K context reserved, int8 KV):
+  one layer's attention, 52 new rows at 262K cells 23.2 -> 2.7 ms, 300 rows 108 -> 20 ms, 2,048 rows 723 -> 125 ms; fresh prompt
+  read 40K 4,570 -> 5,420 tok/s, 16K 5,768 -> 5,870, 4K unchanged.
 - **`--mtp-sampled match | q`** (with `--mtp N`): sampled requests draft with the MTP block too (without it only greedy ones do).
   `match` drafts the block's greedy pick and keeps each window row's token as a plain decode step samples it, so a fixed seed gives the
   same text as without drafts (until a near tie falls the other way in the last bits); `q` samples the drafts from the block's own
