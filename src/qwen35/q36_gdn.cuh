@@ -159,7 +159,7 @@ scan(float* __restrict__ state, const float* __restrict__ h, int C, const float*
         }
         if (ci + 1 < nch) fetch(ci + 1, nxt);
         __syncthreads();
-        // U = K W and QW = Q W for the warp's 4 tokens and this lane's column
+        // U = K W and QW = Q W for the warp's CH / 8 tokens and this lane's column
         float u[TPW], qw[TPW];
 #pragma unroll
         for (int t = 0; t < TPW; ++t) u[t] = qw[t] = 0.f;

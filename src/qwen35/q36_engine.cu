@@ -1764,7 +1764,7 @@ struct Engine {
         sk_part = dalloc((size_t) kSplitK * T * (g.n_expert + 1));
         if (!fused_pattn) att_p16 = dalloc_t<__half>(kAttScoreFloats);
         if (chunked_gdn) {
-            if (g.ssm_state_size != 128 || g.ssm_v_heads % g.ssm_k_heads != 0) {
+            if (g.ssm_state_size != 128 || g.ssm_v_heads % g.ssm_k_heads != 0 || g.ssm_value_dim != g.ssm_v_heads * 128) {
                 std::fprintf(stderr, "strata-q36: --chunked-gdn is built for 128 x 128 states: ignored\n");
                 chunked_gdn = false;
             }
@@ -2361,11 +2361,12 @@ struct Engine {
                 const int tiles = (fast_k && T > kGemmT && !verify) ? (T + kConvTile - 1) / kConvTile : 1;
                 k_conv_seq<<<dim3(C / 128, tiles), 128, 0, st>>>(conv[li], qkv_b, L.conv, hc_b, C, 2 * HK, m->eps, T, !verify);
                 if (T > kGemmT && !verify) {   // a prompt chunk: the column-split delta rule, then the norm
-                    if (chunked_gdn)
+                    if (chunked_gdn) {
                         CK(q36gdn::launch(S[li], hc_b, C, al_b, be_b, gdn_y, HK, HV, T, gdn_L, gdn_P, gdn_cum, st));
-                    else
-                    k_gdn_seq_cols<<<dim3(HV, kGdnColGroups), dim3(128 / kGdnColGroups, 16), 0, st>>>(S[li], hc_b, C, al_b,
-                                                                                                      be_b, gdn_y, HK, HV, T);
+                    } else {
+                        k_gdn_seq_cols<<<dim3(HV, kGdnColGroups), dim3(128 / kGdnColGroups, 16), 0, st>>>(S[li], hc_b, C, al_b,
+                                                                                                          be_b, gdn_y, HK, HV, T);
+                    }
                     k_gdn_norm<<<dim3(HV, T), 128, 0, st>>>(gdn_y, z, L.ssm_norm, m->eps, gdn_y, HV);
                 } else {   // decode, verify windows and commits: one kernel, so a window's rows are a decode step's rows
                     k_gdn_seq<<<HV, dim3(128, 4), 0, st>>>(S[li], hc_b, C, al_b, be_b, z, L.ssm_norm, m->eps, gdn_y, HK, HV,

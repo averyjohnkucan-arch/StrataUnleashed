@@ -255,7 +255,9 @@ on the `strata-q36` command line.
   The prompt read of this card is bound by the expert copies (PCIe), so the end-to-end gain shows only where kernels are the
   limit: fresh read 16K 5,760 -> 5,816 tok/s, 40K 4,560 -> 4,705, 4K unchanged (with `--fused-prompt-attn` 16K 5,876, 40K
   5,424 -> 5,582). Decode is unchanged. KL against the default path (195 steps, 14K and 57K corpus + 76K agent prompt): mean
-  1.20e-2, median 2.0e-3, p99 0.078, max 0.97.
+  1.20e-2, median 2.0e-3, p99 0.078, max 0.97 (the 14K prompt: mean 2.3e-2, max 0.97, top-1 58 of 65 steps; the controls are
+  `--prefill 1024` with mean 8.9e-3 and max 0.51, and the accepted prefetch opt-ins with mean 2.2e-2 and max 1.95). Chunks of 9-33
+  rows are a few microseconds per layer slower than the default kernel. Measured on a Core Ultra 9 285K with 61 GB DDR5-6800.
 - **`--mtp-sampled match | q`** (with `--mtp N`): sampled requests draft with the MTP block too (without it only greedy ones do).
   `match` drafts the block's greedy pick and keeps each window row's token as a plain decode step samples it, so a fixed seed gives the
   same text as without drafts (until a near tie falls the other way in the last bits); `q` samples the drafts from the block's own

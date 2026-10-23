@@ -14,7 +14,8 @@
 
 constexpr int S = 128, HK = 16, HV = 32, C = 2 * HK * S + HV * S;
 
-// ---- the engine's current kernel (q36_engine.cu), unchanged
+// ---- the engine's current kernel (q36_engine.cu, constexpr kGdnColGroups .. k_gdn_seq_cols), copied unchanged: keep it in step
+//      with the engine (a diff of the two bodies is the check)
 constexpr int kGdnColGroups = 4;
 __global__ void __launch_bounds__(512) k_gdn_seq_cols(float* state, const float* h, int C, const float* gate,
                                                       const float* beta, float* o_raw, int h_k, int h_v, int T) {
@@ -94,7 +95,7 @@ int main(int argc, char** argv) {
     int ndev = 0;
     if (cudaGetDeviceCount(&ndev) != cudaSuccess || ndev == 0) { std::printf("q36_gdn_parity: no GPU, skipped\n"); return 77; }
     const bool quick = argc > 1 && std::atoi(argv[1]) == 1;
-    std::vector<int> Ts = {9, 33, 64, 300, 2048};
+    std::vector<int> Ts = {9, 16, 17, 32, 33, 64, 300, 2048};
     if (quick) Ts = {9, 33, 300};
     const int Tmax = Ts.back();
     float *dh, *dg, *db, *dst, *dst2, *dor, *dor2, *Lw, *Pw, *cw;
@@ -108,7 +109,11 @@ int main(int argc, char** argv) {
     cudaEvent_t e0, e1; cudaEventCreate(&e0); cudaEventCreate(&e1);
     int fails = 0;
     std::printf("%-26s | %-23s | %-23s | %-23s | %8s %8s %6s\n", "case", "chunked o (max/rms)", "old o (max/rms)", "state chunked / old (max)", "new ms", "old ms", "x");
-    for (int variant = 0; variant < 2; ++variant)
+    // variant 0: usual gates; 1: strong decay; 2: correlated keys (k = normalised k0 + 0.05 noise per head), beta ~ 0.95, gate ~ -0.01:
+    // the triangular system (I + L) is then at its largest
+    std::vector<std::vector<double>> k0(HK, std::vector<double>(S));
+    for (auto& v : k0) for (auto& x : v) x = gauss();
+    for (int variant = 0; variant < 3; ++variant)
     for (int T : Ts) {
         // data: q / k L2-normed per head, v ~ N(0, 1), gate = -(0.01..2), beta = sigmoid(N(0,1)); a non-zero start state
         std::vector<float> h((size_t) T * C), gate((size_t) T * HV), beta((size_t) T * HV), st0(sn);
@@ -117,12 +122,16 @@ int main(int argc, char** argv) {
                 float* p = &h[(size_t) t * C + blk * S];
                 double n = 0;
                 for (int i = 0; i < S; ++i) { p[i] = (float) gauss(); n += (double) p[i] * p[i]; }
+                if (variant == 2 && blk >= HK && blk < 2 * HK) {
+                    n = 0;
+                    for (int i = 0; i < S; ++i) { p[i] = (float) (k0[blk - HK][i] + 0.05 * p[i]); n += (double) p[i] * p[i]; }
+                }
                 if (blk < 2 * HK) for (int i = 0; i < S; ++i) p[i] = (float) (p[i] / std::sqrt(n));
             }
             for (int v = 0; v < HV; ++v) {
                 // variant 1: strong decay (gates down to -6) and tiny ones; variant 0: the usual range
-                gate[(size_t) t * HV + v] = (float) -(variant ? std::exp(3.0 * rnd() * 2.0) * 0.05 : 0.01 + 1.99 * std::fabs(rnd()));
-                beta[(size_t) t * HV + v] = (float) (1.0 / (1.0 + std::exp(-gauss())));
+                gate[(size_t) t * HV + v] = (float) -(variant == 2 ? 0.01 : variant ? std::exp(3.0 * rnd() * 2.0) * 0.05 : 0.01 + 1.99 * std::fabs(rnd()));
+                beta[(size_t) t * HV + v] = (float) (variant == 2 ? 0.95 : 1.0 / (1.0 + std::exp(-gauss())));
             }
         }
         for (auto& x : st0) x = (float) (0.1 * gauss());
@@ -182,7 +191,7 @@ int main(int argc, char** argv) {
         const bool ok = eo_new <= 3.0 * eo_old + 1e-5 * ref_max && es_new <= 3.0 * es_old + 1e-5 * sref_max
                         && std::sqrt(ss_new / cnt) <= 3.0 * std::sqrt(ss_old / cnt) + 1e-6 * ref_max;
         if (!ok) ++fails;
-        std::printf("T=%-5d %-18s | %.2e / %.2e %s | %.2e / %.2e     | %.2e / %.2e        | %8.3f %8.3f %5.1fx\n", T, variant ? "strong decay" : "usual gates",
+        std::printf("T=%-5d %-18s | %.2e / %.2e %s | %.2e / %.2e     | %.2e / %.2e        | %8.3f %8.3f %5.1fx\n", T, variant == 2 ? "correlated keys" : variant ? "strong decay" : "usual gates",
                     eo_new, std::sqrt(ss_new / cnt), ok ? "ok  " : "FAIL", eo_old, std::sqrt(ss_old / cnt), es_new, es_old, tn, to, to / tn);
     }
     std::printf(fails ? "q36_gdn_parity: %d FAILED\n" : "q36_gdn_parity: all ok\n", fails);
