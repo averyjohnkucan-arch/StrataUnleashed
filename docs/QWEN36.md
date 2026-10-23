@@ -250,8 +250,8 @@ on the `strata-q36` command line.
   from shared memory, `delta` by forward substitution (one column per lane, no barrier). The default kernel (`k_gdn_seq_cols`)
   has two barriers per token for 2,048 tokens in series. The state is left in the engine's layout, so decode and verify steps read
   it as before. FP32 sums in another order: class B. Measured on an RTX 5080 (Sage-A1.5 Q4_K_M): one layer of a 2,048-token chunk
-  1.82 -> 0.87 ms (kernel microbenchmark, `q36_gdn_parity`: error against a double-precision recurrence 1e-8 .. 3e-7 in the
-  outputs and 7e-8 .. 2.7e-6 in the state, both at the default kernel's order of magnitude); 28 ms less GPU kernel time per chunk (nsys, 16K prompt).
+  1.82 -> 0.87 ms (kernel microbenchmark, `q36_gdn_parity`: error against a double-precision recurrence in the outputs 1e-8 .. 1.3e-7 (the default kernel: 5e-9 ..
+  2e-8) and in the state 7e-8 .. 9e-7 (default: 3e-8 .. 2e-7), a few times the default kernel's, far below FP16 rounding); 28 ms less GPU kernel time per chunk (nsys, 16K prompt).
   The prompt read of this card is bound by the expert copies (PCIe), so the end-to-end gain shows only where kernels are the
   limit: fresh read 16K 5,760 -> 5,816 tok/s, 40K 4,560 -> 4,705, 4K unchanged (with `--fused-prompt-attn` 16K 5,876, 40K
   5,424 -> 5,582). Decode is unchanged. KL against the default path (195 steps, 14K and 57K corpus + 76K agent prompt): mean
