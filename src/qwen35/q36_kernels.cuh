@@ -197,7 +197,8 @@ __global__ void __launch_bounds__(1024) k_sh_gu(const uint8_t* __restrict__ wg, 
 /// lane l, C_l = ((s_l + s_{l+128}) + (s_{l+64} + s_{l+192})) + ((s_{l+32} + s_{l+160}) + (s_{l+96} + s_{l+224})) - the
 /// tree's value at index l after stage 32 - and the lanes then add l + 16, 8, 4, 2, 1 (shfl_down = stages 16 .. 1).
 /// Every add pairs the same two values as before (float + is commutative), so lane 0's sum has the tree's bits; the
-/// sum goes to every lane.  Needs a __syncthreads() between the sh[] stores and this call.
+/// sum goes to every lane.  Needs a __syncthreads() between the sh[] stores and this call, and blockDim.x == 256 (sh[]
+/// holds one value per thread; the 256-thread kernels below are launched that way).
 __device__ __forceinline__ float sum256(const float* sh) {
     const int l = threadIdx.x & 31;
     const float a0 = sh[l] + sh[l + 128], a1 = sh[l + 64] + sh[l + 192];
@@ -319,9 +320,10 @@ __device__ __forceinline__ const uint8_t* slot_blob(const uint8_t* blobs, const 
 /// k_moe_out_small for K_ == 8 and n == 2048 with 256 threads per row (launch it <<<T, 256>>>): thread t owns the 8
 /// elements t + 256 j, which is exactly what the old squares loop summed per thread (in order j = 0 .. 7), so the
 /// squares need no shared-memory exchange; v and hv stay in registers (no vv[], no volatile read-back); the sum is
-/// sum256's single-barrier tree.  Same bits as k_moe_out_small.  The read-only inputs are __restrict__ / __ldg so that
-/// all of the thread's loads (8 parts, the shared row, x) are issued before the first fma: without it the compiler
-/// kept the loads behind the stores to x and the kernel was slower than the old one (5.5 vs 5.2 us, 3.5 with it).
+/// sum256's single-barrier tree.  Same bits as k_moe_out_small.  The inputs are const __restrict__: with them the
+/// compiler keeps the thread's loads (8 parts, the shared row, x), which the source puts before the first fma, ahead of
+/// the stores to x; without it they stayed behind the stores and the kernel was slower than the old one (5.5 vs 5.2 us,
+/// 3.5 with it).
 __global__ void __launch_bounds__(256) k_moe_out_s8(float* __restrict__ x, const float* __restrict__ parts,
                                                     const int32_t* __restrict__ prow, const float* __restrict__ wts,
                                                     const float* __restrict__ shared, const float* __restrict__ sgate,
@@ -332,17 +334,17 @@ __global__ void __launch_bounds__(256) k_moe_out_s8(float* __restrict__ x, const
     float* xr = x + (size_t) t * n;
     int pr[8];
 #pragma unroll
-    for (int k = 0; k < 8; ++k) pr[k] = prow ? __ldg(prow + t * 8 + k) : t * 8 + k;
+    for (int k = 0; k < 8; ++k) pr[k] = prow ? prow[t * 8 + k] : t * 8 + k;
     float pv[8][8], sv[8], xv[8], w8[8];
 #pragma unroll
-    for (int k = 0; k < 8; ++k) w8[k] = __ldg(wts + (size_t) t * 8 + k);
-    const float gs = sigm(__ldg(sgate + (size_t) t * sg_stride));
+    for (int k = 0; k < 8; ++k) w8[k] = wts[(size_t) t * 8 + k];
+    const float gs = sigm(sgate[(size_t) t * sg_stride]);
 #pragma unroll
     for (int j = 0; j < 8; ++j) {
-        sv[j] = __ldg(shared + (size_t) t * n + threadIdx.x + 256 * j);
+        sv[j] = shared[(size_t) t * n + threadIdx.x + 256 * j];
         xv[j] = xr[threadIdx.x + 256 * j];
 #pragma unroll
-        for (int k = 0; k < 8; ++k) pv[j][k] = __ldg(parts + (size_t) pr[k] * n + threadIdx.x + 256 * j);
+        for (int k = 0; k < 8; ++k) pv[j][k] = parts[(size_t) pr[k] * n + threadIdx.x + 256 * j];
     }
     float s = 0.f, vv[8];
 #pragma unroll
@@ -363,7 +365,7 @@ __global__ void __launch_bounds__(256) k_moe_out_s8(float* __restrict__ x, const
 #pragma unroll
     for (int j = 0; j < 8; ++j) {
         const int i = threadIdx.x + 256 * j;
-        const float hv = __fmul_rn(__fmul_rn(vv[j], r), __ldg(wn + i));
+        const float hv = __fmul_rn(__fmul_rn(vv[j], r), wn[i]);
         h[(size_t) t * n + i] = hv;
         if (hq) q8_store(hq + (size_t) t * (n >> 5), i, hv, threadIdx.x & 31);
     }
