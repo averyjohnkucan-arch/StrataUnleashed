@@ -5162,12 +5162,14 @@ int strata::qwen35::run(int argc, char** argv) {
             if (E.hy_layers && E.pool) {
                 const auto& P = *E.pool;
                 std::fprintf(stderr, "strata-q36: pool: %lld layer calls, %.1f us each (plan %.2f, gate/up %.2f, h-quant %.2f, "
-                             "down %.2f); %.1f MB read (%.1f GB/s over gate/up + down); %lld phases, %.1f tasks each, "
-                             "park-before %.2f drain %.2f park-after %.2f us per phase\n", E.hy_layers,
+                             "down %.2f); %.1f MB read (%.1f GB/s over gate/up + down; gate/up %.1f, down %.1f); %lld phases, "
+                             "%.1f tasks each, park-before %.2f drain %.2f park-after %.2f us per phase\n", E.hy_layers,
                              1e3 * E.hy_cpu_ms / E.hy_layers, 1e3 * E.hy_plan_ms / E.hy_layers,
                              1e3 * P.ms_multi_gu / E.hy_layers, 1e3 * P.ms_multi_q / E.hy_layers,
                              1e3 * P.ms_multi_down / E.hy_layers, (double) P.multi_bytes / 1e6,
-                             (double) P.multi_bytes / 1e6 / std::max(1e-9, P.ms_multi_gu + P.ms_multi_down), (long long) P.ph_calls,
+                             (double) P.multi_bytes / 1e6 / std::max(1e-9, P.ms_multi_gu + P.ms_multi_down),
+                             (double) P.bytes_gu / 1e6 / std::max(1e-9, P.ms_multi_gu),
+                             (double) P.bytes_down / 1e6 / std::max(1e-9, P.ms_multi_down), (long long) P.ph_calls,
                              P.ph_calls ? (double) P.ph_tasks / (double) P.ph_calls : 0.0,
                              P.ph_calls ? 1e3 * P.ms_ph_pre / (double) P.ph_calls : 0.0,
                              P.ph_calls ? 1e3 * P.ms_ph_drain / (double) P.ph_calls : 0.0,

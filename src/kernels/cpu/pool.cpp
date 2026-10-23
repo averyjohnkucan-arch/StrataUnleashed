@@ -1392,6 +1392,8 @@ void ExpertPool::run_split_multi_native(const NativeFmt& f, ExpertJobMulti* jobs
         ms_multi_down += std::chrono::duration<double, std::milli>(d - c).count();
     }
     multi_bytes += (int64_t) n * (int64_t) f.bytes;
+    bytes_gu += (int64_t) n * (int64_t) (2 * f.up_off);
+    bytes_down += (int64_t) n * (int64_t) (f.d_row * (size_t) f.n_embd);
     mode_ = 0;
     ms_drain_ += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
 }
