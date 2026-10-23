@@ -281,6 +281,14 @@ on the `strata-q36` command line.
   Sage, RTX 5080): mean 5.7e-3, median 1.1e-3, p99 0.033, max 0.36 (the `--prefill 1024` floor: 8.9e-3, 1.3e-3, 0.09, 0.51).
   Microbench of the partial kernel for one layer (int8, 16 / 2 heads, L2 flushed): 262K cells 1 row 331 us (the int8 kernel above: 361),
   a 3-row window 425 us (925), 4 rows 461 us (1,200); 32K cells, 3 rows 76 us (157).
+- **`--sample-gpu`** (env `STRATA_Q36_SAMPLE_GPU=1`): a sampled row comes to the host as a shortlist, not as 1 MB of logits. A GPU
+  kernels (`k_cand_part`, `k_cand_merge`) return the K highest raw logits of each row (K = `top_k` + the number of distinct ids the penalties touch,
+  at most 160; ties: the higher logit, then the lower id), and the host applies the penalties to them and runs the rest of the chain.
+  Penalties only lower a logit, so the shortlist holds the same top_k as the whole row and the token, the rng use and the text
+  are the same as without the option (a request with a penalty that raises a logit, or K past 160, copies the row whole). A
+  speculative window's rows and the drafts of `--mtp-sampled q` use it too, one copy of a few KB per window instead of one MB
+  per row. `STRATA_Q36_SAMPLE_PROFILE=1` logs the sampler's host time per request; `STRATA_Q36_SAMPLE_CHECK=1` checks every
+  shortlist against the whole row (slow; a test aid).
 - **`--mtp-sampled match | q`** (with `--mtp N`): sampled requests draft with the MTP block too (without it only greedy ones do).
   `match` drafts the block's greedy pick and keeps each window row's token as a plain decode step samples it, so a fixed seed gives the
   same text as without drafts (until a near tie falls the other way in the last bits); `q` samples the drafts from the block's own
@@ -337,7 +345,8 @@ The gates are in `tools/qwen35/` and talk to the engine through its serve protoc
 - `q36_attn_parity` (built with the tests or `-DSTRATA_PARITY_Q36_ATTN=ON`, GPU, no model): the grouped-query attention kernels (fp32,
   fp16, int8 and k8v4 cells) against a double-precision reference.
 - `q36_sampling_test` (CPU): `--mtp-sampled`'s rules on a toy model: `match` gives the plain sampler's text seed for seed, `match` and
-  `q` give the exact joint of four tokens (with `--spec-min-p` and a `--draft-vocab` row too), and three wrong rules fail.
+  `q` give the exact joint of four tokens (with `--spec-min-p` and a `--draft-vocab` row too), and three wrong rules fail; the
+  shortlist of `--sample-gpu` gives the whole row's chain, token and rng state on random rows with ties and penalties.
 - `q36_spec_sampled.py`: `--mtp-sampled` on the real model (the distribution of short continuations against `off`, and the speed).
 - `q36_snapshot_check.py`: `--snapshots` over the serve protocol: a prompt that parts after a snapshot gives the tokens of a fresh read.
 - `tools/reuse_replay.py`: a recorded agent session replayed against a running server: how much of each prompt the engine reused.

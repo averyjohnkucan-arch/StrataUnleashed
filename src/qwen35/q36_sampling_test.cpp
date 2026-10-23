@@ -14,6 +14,9 @@
 //      probabilities multiplied out over every 4-token continuation), chi-square at a 99.9% bound.
 //   3. two controls must FAIL test 2: the judge handed a wrong q (uniform over q's list), and a target whose window
 //      rows ignore the drafts before them.
+//   5. --sample-gpu's shortlist: sample_c over the K highest raw logits (any order) gives chain()'s kept list, the same
+//      token and the same rng state as sample() over the whole row, on random rows with many exact ties, random
+//      penalties and histories, and the spec loop over shortlists (judge_c, draft_c) gives the loop's text and counts.
 //   4. --draft-vocab: the block's row covers the first ids only, the history (and the penalties) every id: a history id
 //      past the row takes no penalty there (libstdc++'s assertions, on below, abort an access past the row), and q over
 //      the short row still gives the target's joint.
@@ -64,6 +67,16 @@ std::vector<int32_t> plain(const Sampling& s, unsigned long long seed) {
 }
 
 enum class Control { none, wrong_q, blind_rows, gate_pick };
+bool g_cand = false;   // spec(): rows and draft rows as shuffled shortlists (judge_c, draft_c)
+std::mt19937_64 g_shuf(5);
+Cand as_cand(const std::vector<float>& row) {   // the whole row, in a random order (K == the row's width)
+    Cand c;
+    std::vector<int> o(row.size());
+    for (size_t i = 0; i < o.size(); ++i) o[i] = (int) i;
+    std::shuffle(o.begin(), o.end(), g_shuf);
+    for (int i : o) { c.id.push_back(i); c.v.push_back(row[(size_t) i]); }
+    return c;
+}
 float g_min_p = 0.f;   // --spec-min-p for spec(): a draft below it ends the step's drafts
 int g_draft_v = V;     // --draft-vocab for spec(): the block's row holds ids 0 .. g_draft_v - 1
 
@@ -89,7 +102,12 @@ std::vector<int32_t> spec(const Sampling& s, unsigned long long seed, SpecRule r
             row.resize((size_t) g_draft_v);
             float pr;
             if (rule == SpecRule::q) {
-                drafts[(size_t) d] = sj.draft(d, drafts.data(), row.data(), (int) row.size(), &pr);
+                if (g_cand) {
+                    Cand cd = as_cand(row);
+                    drafts[(size_t) d] = sj.draft_c(d, drafts.data(), cd, row.size(), &pr);
+                } else {
+                    drafts[(size_t) d] = sj.draft(d, drafts.data(), row.data(), (int) row.size(), &pr);
+                }
                 if (ctl == Control::wrong_q)
                     for (float& q : sj.qp[d]) q = 1.f / (float) sj.qp[d].size();
             } else {   // the engine's k_pick_prob: the pick's softmax probability over the raw logits
@@ -109,7 +127,9 @@ std::vector<int32_t> spec(const Sampling& s, unsigned long long seed, SpecRule r
             if (ctl != Control::blind_rows) h.insert(h.end(), drafts.begin(), drafts.begin() + r);
             o = target(h);
         };
-        const int a = sj.judge(row, Dn, drafts, picks);
+        const int a = g_cand ? sj.judge_c([&](int r, Cand& cd) { std::vector<float> o; row(r, o); cd = as_cand(o); }, (size_t) V, Dn,
+                                          drafts, picks)
+                             : sj.judge(row, Dn, drafts, picks);
         offered += Dn;
         accepted += a;
         bool ended = false;
@@ -190,6 +210,92 @@ bool dist_case(const char* name, const Sampling& s, SpecRule rule, int D, Contro
     return ok;
 }
 
+/// the K highest raw logits of a row by the tie rule, shuffled (what k_topk_cand returns)
+Cand shortlist(const std::vector<float>& lg, int K) {
+    std::vector<int> o(lg.size());
+    for (size_t i = 0; i < o.size(); ++i) o[i] = (int) i;
+    std::partial_sort(o.begin(), o.begin() + K, o.end(), [&](int a, int b) { return before(lg[(size_t) a], a, lg[(size_t) b], b); });
+    o.resize((size_t) K);
+    std::shuffle(o.begin(), o.end(), g_shuf);
+    Cand c;
+    for (int i : o) { c.id.push_back(i); c.v.push_back(lg[(size_t) i]); }
+    return c;
+}
+
+/// 5a. chain_c / sample_c against chain / sample on random wide rows
+void shortlist_case() {
+    std::mt19937_64 r(77);
+    long long cases = 0, bad = 0, used = 0;
+    for (int it = 0; it < 30000; ++it) {
+        const int n = 2000 + (int) (r() % 8000);   // (the GPU kernels' rows are at least 32 K wide)
+        std::vector<float> lg((size_t) n);
+        const int quant = (int) (r() % 3);   // 0: continuous, 1: coarse (many ties), 2: very coarse
+        for (float& x : lg) {
+            x = (float) ((double) (r() % 100000) / 100000.0 * 12.0 - 6.0);
+            if (quant == 1) x = std::round(x * 4.f) / 4.f;
+            if (quant == 2) x = std::round(x);
+        }
+        if (r() % 7 == 0) for (size_t i = 0; i < 5; ++i) lg[r() % lg.size()] = -0.f;   // signed zeros compare equal
+        Sampling s;
+        s.temperature = r() % 6 == 0 ? 0.f : 0.3f + (float) (r() % 100) / 70.f;
+        s.top_k = (int) (r() % 4) == 0 ? 0 : 1 + (int) (r() % 70);
+        s.top_p = 0.5f + (float) (r() % 50) / 100.f;
+        s.min_p = r() % 3 == 0 ? (float) (r() % 20) / 100.f : 0.f;
+        if (r() % 3) s.repeat = 1.f + (float) (r() % 30) / 100.f;
+        if (r() % 3) s.freq = (float) (r() % 20) / 20.f;
+        if (r() % 3) s.present = (float) (r() % 40) / 20.f;
+        s.last_n = (int) (r() % 5) == 0 ? 0 : 1 + (int) (r() % 90);
+        std::vector<int32_t> hist((size_t) (r() % 200));
+        for (int32_t& h : hist) h = (int32_t) (r() % (r() % 2 ? 40 : (unsigned) n));
+        const int n_extra = (int) (r() % 4);
+        std::vector<int32_t> extra((size_t) n_extra);
+        for (int32_t& h : extra) h = (int32_t) (r() % (unsigned) n);
+        std::vector<int32_t> full = hist;
+        full.insert(full.end(), extra.begin(), extra.end());   // the row's history: hist and the drafts before it
+        const int K = cand_need(s, hist, extra.data(), n_extra, (size_t) n);
+        if (K == 0) continue;
+        ++used;
+        std::vector<float> a = lg;
+        Chain ca, cb;
+        const int ga = chain(a, s, full, ca);
+        Cand cd = shortlist(lg, K);
+        const int gb = chain_c(cd, (size_t) n, s, full, cb);
+        bool same = ga == gb && ca.keep == cb.keep && ca.tot == cb.tot;
+        for (size_t i = 0; same && i < ca.keep; ++i) same = ca.idx[i] == cb.idx[i] && ca.p[i] == cb.p[i];
+        std::mt19937_64 ra(it), rb(it);
+        std::vector<float> a2 = lg;
+        Cand cd2 = shortlist(lg, K);
+        const int ta = sample(a2, s, full, ra), tb = sample_c(cd2, (size_t) n, s, full, rb);
+        same = same && ta == tb && ra == rb;
+        ++cases;
+        bad += !same;
+    }
+    std::printf("  shortlist (K = top_k + penalised ids) = whole row: %lld of %lld cases same chain, token, rng state%s\n",
+                cases - bad, cases, bad ? "   <-- FAIL" : "");
+    if (bad || cases < 5000) ++g_fail;
+}
+
+/// 5b. the spec loop over shortlists gives the loop's text and counts
+void shortlist_loop() {
+    Sampling card;
+    card.temperature = 1.0f; card.top_p = 0.95f; card.top_k = 20; card.present = 1.5f; card.last_n = 64;
+    int same = 0, total = 0;
+    for (SpecRule rule : {SpecRule::match, SpecRule::q})
+        for (int D = 1; D <= 3; ++D)
+            for (int i = 0; i < 4000; ++i) {
+                long long o1 = 0, a1 = 0, o2 = 0, a2 = 0;
+                g_cand = false;
+                const auto t1 = spec(card, (unsigned long long) i, rule, D, Control::none, o1, a1);
+                g_cand = true;
+                const auto t2 = spec(card, (unsigned long long) i, rule, D, Control::none, o2, a2);
+                g_cand = false;
+                same += t1 == t2 && o1 == o2 && a1 == a2;
+                ++total;
+            }
+    std::printf("  spec loop over shortlists = over whole rows: %d of %d%s\n", same, total, same == total ? "" : "   <-- FAIL");
+    if (same != total) ++g_fail;
+}
+
 }  // namespace
 
 int main() {
@@ -263,6 +369,10 @@ int main() {
     dist_case("q, card sampling, D=2, draft vocab 6 of 8", card, SpecRule::q, 2, Control::none, n, true);
     dist_case("match, card sampling, D=2, draft vocab 6 of 8", card, SpecRule::match, 2, Control::none, n, true);
     g_draft_v = V;
+
+    // 5. --sample-gpu's shortlist
+    shortlist_case();
+    shortlist_loop();
 
     std::printf("q36_sampling_test: %s\n", g_fail ? "FAILED" : "passed");
     return g_fail ? 1 : 0;
