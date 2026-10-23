@@ -1158,6 +1158,9 @@ struct Model {
 };
 
 constexpr size_t kMmqTail = 4096;
+constexpr size_t kHybridHeadroom = (size_t) 256 << 20;   // hybrid placement: free VRAM kept at the low-water mark
+constexpr size_t kLazyGrowth = (size_t) 48 << 20;        // ... plus the engine's lazy growth after placement (measured 21 MiB)
+constexpr size_t kPlacedAfter = (size_t) 96 << 20;       // ... plus what place_experts allocates after reading the free VRAM (measured 95 MiB)
 // the defaults of --pool-warm K and --prefetch-copies 0|1 (--no-pool-warm: K = 0; the envs STRATA_Q36_POOL_WARM / STRATA_Q36_PREFETCH_COPIES override
 // these, the flags override the envs).  Default-on needs the lookahead too (--expert-prefetch's default, now 0), or the warm-up posts nothing
 constexpr int kPoolWarmDefault = 0, kPrefetchCopiesDefault = 1;
@@ -4256,6 +4259,37 @@ struct Engine {
 };
 
 // ------------------------------------------------------------------------------------------------ expert placement
+/// STRATA_Q36_VRAM_WATCH=1 (tests): a thread polls the device's free VRAM every few ms; each new low-water mark is said, and the
+/// lowest at exit.  It is the number the expert placement's headroom is sized from (the whole device, other programs included).
+struct VramWatch {
+    std::atomic<bool> stop{false};
+    std::atomic<size_t> low{(size_t) -1};
+    std::thread th;
+    VramWatch() {
+        th = std::thread([this] {
+            const auto t0 = Clock::now();
+            size_t said = (size_t) -1;
+            while (!stop.load()) {
+                size_t fr = 0, tot = 0;
+                if (cudaMemGetInfo(&fr, &tot) == cudaSuccess && fr < low.load()) {
+                    low = fr;
+                    if (said == (size_t) -1 || fr + ((size_t) 8 << 20) <= said) {   // (a new low by 8 MiB or more)
+                        std::fprintf(stderr, "strata-q36: VRAM watch: %.3f GiB free at %.1f s\n", (double) fr / (1 << 30),
+                                     ms_since(t0) / 1000.0);
+                        said = fr;
+                    }
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            }
+        });
+    }
+    ~VramWatch() {
+        stop = true;
+        th.join();
+        std::fprintf(stderr, "strata-q36: VRAM watch: low-water mark %.3f GiB free\n", (double) low.load() / (1 << 30));
+    }
+};
+
 /// The routed experts after the engine's buffers: all in VRAM when they fit in `vram_gib` (< 0: the free VRAM less a
 /// reserve), else the hybrid mode - every expert in host memory, the same number of VRAM slots per layer, a decode
 /// batch's other experts on the CPU pool and a prompt chunk's streamed through two staging buffers.
@@ -4369,7 +4403,16 @@ bool place_experts(Model& m, Engine& E, double vram_gib, int threads, int hybrid
     // to the slots: the same headroom, a few more slots)
     // (tmax rows of ecpu + d_miss, and only in the reserve-derived budget: --expert-vram names the experts' budget itself)
     const size_t cpu_credit = vram_gib < 0 ? (size_t) E.tmax * m.top_k * ((size_t) g.n_embd + 1) * 4 : 0;
-    size_t slot_bytes = budget2 + cpu_credit > staging + cpu_dev ? budget2 + cpu_credit - staging - cpu_dev : 0;
+    // the hybrid mode's slots take the room down to a smaller headroom than the 768 MiB reserve (which the all-in-VRAM decision above keeps):
+    // 256 MiB stay free at the low-water mark of the free VRAM (for the driver, the desktop and the next request's buffers), the engine's lazy
+    // growth after placement is 21 MiB (measured over a 245K prompt read + MTP decode, a 198K read with two follow-ups, lend-staging's evict
+    // and refill, and the first request: STRATA_Q36_VRAM_WATCH=1) and place_experts itself allocates about 95 MiB after reading the free VRAM
+    const size_t hy_reserve = kHybridHeadroom + kLazyGrowth + kPlacedAfter + cpu_credit;   // (cpu_credit: the rows' room, added back below)
+    const size_t hy_extra = (vram_gib < 0 && !mtp_only && fr > reserve && budget2 == fr - reserve && reserve > hy_reserve) ? reserve - hy_reserve : 0;
+    if (std::getenv("STRATA_Q36_PLACE_DEBUG"))
+        std::fprintf(stderr, "strata-q36: place: free %.1f MiB, budget %.1f MiB (+%.1f MiB hybrid headroom), staging %.1f, cpu_dev %.1f, credit %.1f, per_slot %.2f MiB\n",
+                     fr / 1048576.0, budget2 / 1048576.0, hy_extra / 1048576.0, staging / 1048576.0, cpu_dev / 1048576.0, cpu_credit / 1048576.0, per_slot / 1048576.0);
+    size_t slot_bytes = budget2 + hy_extra + cpu_credit > staging + cpu_dev ? budget2 + hy_extra + cpu_credit - staging - cpu_dev : 0;
     if (slot_bytes + staging + ((size_t) 256 << 20) > fr) slot_bytes = fr > staging + ((size_t) 512 << 20) ? fr - staging - ((size_t) 512 << 20) : 0;
     // --expert-slots: that many per layer (tests: the same split with and without the MTP block)
     int S = slots > 0 ? (int) std::min<int64_t>(ne, slots) : (int) std::min<size_t>((size_t) ne, slot_bytes / per_slot);
@@ -5708,6 +5751,8 @@ int strata::qwen35::run(int argc, char** argv) {
         std::fprintf(stderr, "strata-q36: %s\n", err.c_str());
         return 1;
     }
+    std::unique_ptr<VramWatch> vram_watch;
+    if (std::getenv("STRATA_Q36_VRAM_WATCH")) vram_watch.reset(new VramWatch);
     struct Report {
         Engine& E;
         const std::string& save;   // --expert-profile-save
