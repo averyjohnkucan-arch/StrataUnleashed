@@ -1498,7 +1498,7 @@ struct Engine {
     int pf_for = -1;              // the layer the pending prediction is for
     long long pf_fwd = 0;         // main forwards so far (the slots' reuse rule: never one a running forward's plan read)
     int pf_budget = 64, pf_used = 0;   // copies per forward, used this forward
-    int32_t pf_gen = 0;           // the prefetch copies' numbers
+    int32_t pf_gen = 0;           // the prefetch copies' numbers (1 .. INT32_MAX, then 1 again; STRATA_Q36_PF_GEN_START for tests)
     long long pf_copies = 0, pf_hits = 0, pf_preds = 0, pf_late = 0;
     std::vector<int> pf_order, pf_idx, pf_cnt;   // the candidates, a row's sort, rows predicting each expert
     std::vector<float> pf_best;                  // each expert's highest predicted logit over the rows
@@ -2838,7 +2838,10 @@ struct Engine {
         }
         CK(cudaMemcpyAsync(L.blobs + (size_t) (S + p) * L.stride, L.hblobs + (size_t) x * L.stride, L.L.bytes,
                            cudaMemcpyHostToDevice, pfst));
-        q.gen = ++pf_gen;
+        // (the word 0 means "not landed": the number skips it when the counter wraps, 2^31 copies on)
+        if (pf_gen >= INT32_MAX) std::fprintf(stderr, "strata-q36: the prefetch copies' numbers wrapped (skipping 0)\n");
+        pf_gen = pf_gen >= INT32_MAX ? 1 : pf_gen + 1;
+        q.gen = pf_gen;
         k_pf_landed<<<1, 1, 0, pfst>>>(H.flag_d + p, q.gen);
         q.x = x;
         q.state = 1;
@@ -3728,6 +3731,8 @@ bool place_experts(Model& m, Engine& E, double vram_gib, int threads, int hybrid
     if (P > 0) {   // --expert-prefetch
         E.pf_slots = P;
         E.pf_topk = std::min<int>(E.pf_topk, (int) ne);   // (prefetch_issue's partial_sort)
+        if (const char* v = std::getenv("STRATA_Q36_PF_GEN_START"))   // tests: start the copies' numbers near the wrap
+            E.pf_gen = (int32_t) std::max<long long>(0, std::min<long long>(INT32_MAX - 1, std::atoll(v)));
         CK(cudaStreamCreateWithFlags(&E.pst, cudaStreamNonBlocking));
         CK(cudaStreamCreateWithFlags(&E.pfst, cudaStreamNonBlocking));
         for (cudaEvent_t* ev : {&E.ev_pf0, &E.ev_pred}) CK(cudaEventCreateWithFlags(ev, cudaEventDisableTiming));
