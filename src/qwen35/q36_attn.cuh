@@ -500,9 +500,16 @@ __global__ void __launch_bounds__(256, R == 1 ? 2 : 1) part_q8x(const float* q, 
 // split into launches of whole groups (nt = 3: one launch of R = 3; 8: R = 4 twice; 7: R = 4, then R = 3).  one_row: the
 // batch rows mode, whose rows have different caches.  STRATA_Q36_ATTN_OLD=1 runs part_q8 (the A/B and the VERIFY
 // reference); STRATA_Q36_ATTN_ROWS=n caps R (tests).  Only for 8 query heads per KV head (Sage's 16 / 2).
-// --attn-mma (or STRATA_Q36_ATTN_MMA=1): the tensor-core kernel part_q8m for the int8 cache (class B, sm_80+)
+// STRATA_Q36_ATTN_MMA: unset -1 (the engine's default decides), 0 off, anything else on.  The engine resolves it with --attn-mma /
+// --no-attn-mma and its hardware checks (resolve_defaults in q36_engine.cu) and sets mma_enabled(); a tool that includes this file
+// gets the variable alone (off when unset).
+inline int mma_env() {
+    const char* v = std::getenv("STRATA_Q36_ATTN_MMA");
+    return v == nullptr || *v == '\0' ? -1 : (v[0] == '0' && v[1] == '\0') ? 0 : 1;
+}
+// the tensor-core kernel part_q8m for the int8 cache (class B, sm_80+)
 inline bool& mma_enabled() {
-    static bool on = std::getenv("STRATA_Q36_ATTN_MMA") != nullptr;
+    static bool on = mma_env() == 1;
     return on;
 }
 template<class Rows>

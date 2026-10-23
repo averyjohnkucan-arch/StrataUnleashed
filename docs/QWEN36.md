@@ -63,7 +63,7 @@ on an RTX 5080 with DDR5-6400 dual channel, two long agent sessions with a Qwen3
 - `--snapshots 2` in the config's `args` keeps two copies of the recurrent state per session (62.8 MiB each for Qwen3.6-35B-A3B),
   taken at the end of reading a prompt of 4,096 tokens or more (`--snapshot-min N`): a prompt that parts from the held tokens after
   one restores it and reads only the rest.
-- `--snapshot-host` (with `--snapshots K`; it says so when K is missing) keeps the snapshots in pinned host memory instead of VRAM, so the
+- `--snapshot-host` (on by default with `--snapshots K` in the hybrid mode, see "Defaults on this build"; `--no-snapshot-host` keeps them in VRAM) keeps the snapshots in pinned host memory instead of VRAM, so the
   expert slots get K x 62.8 MiB. A snapshot is then a copy to the host and a restore a copy back; the restored bytes are the same.
   RTX 5080 16 GB, PCIe 5.0 x16, `--max-context 262144 --kv int8`, one snapshot of 62.8 MiB: 1.6 ms to the host and 1.2 ms back (0.15 ms
   and 0.16 ms in VRAM). With `--snapshots 2` the cache slots per layer went from 80 to 82, and forced-text decode (one run each,
@@ -249,8 +249,29 @@ out the predicted ones. Chunked (WY) GDN was not attempted.
 
 ## Opt-ins of this engine path
 
-All off by default; with none of them the engine runs as before. They go in the config's `args` (`strata-qwen36-<size>.json`) or
-on the `strata-q36` command line.
+They go in the config's `args` (`strata-qwen36-<size>.json`) or on the `strata-q36` command line. Four of them are **on by default**
+on this build, where the hardware and the configuration take them (next table); everything else is off, and with those four turned
+off (`--no-attn-mma --no-fused-prompt-attn --no-chunked-gdn --no-snapshot-host`) the engine runs as before, bit for bit (checked with
+`--dump-full-logits` at 4K and 14K, Sage, RTX 5080, fixed slots).
+
+### Defaults on this build
+
+Every opt-in that measured a gain without a quality loss is on by default where it is supported, has a `--no-<name>` escape, and
+leaves one line in the log, e.g. `strata-q36: defaults: attn-mma on, fused-prompt-attn on, chunked-gdn on, snapshot-host off (needs
+--snapshots K)`; an explicit flag gets the same checks and the same line (`on (flag)`, or the reason it cannot take effect). `--no-<name>`
+wins over `--<name>`. A default never turns on what the explicit flag would refuse, and where the gain was measured on one
+configuration only (marked "default only"), the default stays off elsewhere while the flag still works.
+
+| Feature | Class | On by default when | Escape | Measured gain (Sage-A1.5 Q4_K_M, RTX 5080, `--max-context 262144`) |
+| --- | --- | --- | --- | --- |
+| `--attn-mma` | B (KL inside the `--prefill 1024` floor) | CUDA sm_80+, `--kv int8`, `--gqa-attn`, 8 query heads of 256 per KV head; default only: not with `--batch` | `--no-attn-mma`, `STRATA_Q36_ATTN_MMA=0` | decode `--mtp 0` forced text +4.6 / +2.6 / +6.6% at 4K / 16K / 40K over the build with `part_q8` (+1.3 / +1.4 / +3.0% over `part_q8x`); `--mtp 2`, 40K, fixed slots: 125.3 against 117.7 tok/s; a 3-row window at 262K cells 1,549 -> 425 us per layer (microbench) |
+| `--fused-prompt-attn` | B | CUDA sm_80+, `--kv int8`, 8 query heads of 256 per KV head | `--no-fused-prompt-attn` | fresh prompt read 40K 4,570 -> 5,420 tok/s, 16K 5,768 -> 5,870; decode +3.5 / +3.6 / +2.1% at 4K / 16K / 40K (12 more expert slots) |
+| `--chunked-gdn` | B | CUDA (any arch), 128 x 128 states | `--no-chunked-gdn` | fresh prompt read 40K 4,560 -> 4,705, 16K 5,760 -> 5,816; decode unchanged |
+| `--snapshot-host` | A (the same bytes) | `--snapshots K` with K > 0, CUDA, the hybrid mode for certain (experts larger than the free VRAM, or `--expert-slots`); default only: not with `--batch` | `--no-snapshot-host` | cache slots 80 -> 82 with `--snapshots 2`, decode +0.7% |
+
+Stays off: `--fused-prompt-attn-i8` (int8 scores: precision), `--gqa-attn` and `--kv` (the choices of the cache; the first three rows
+need them), everything under "Test settings". On a card below sm_80 the log says `attn-mma off (compute capability 7.x, needs sm_80+)`
+and the same for the fused prompt attention. `STRATA_Q36_DEFAULTS_SM=N` (a test setting) makes the checks assume compute capability N.
 
 - **`--kv fp16 | int8 | k8v4`**: the keys and values in less VRAM than the default fp32: 22.5 / 12.7 / 9.5 KB per token and session
   instead of 45 KB (fp16 is #3641's; int8 is q8_0 rows; k8v4 is int8 keys and rotated q4_0 values, as the main path's `--kv k8v4`). fp16 and k8v4
@@ -266,7 +287,7 @@ on the `strata-q36` command line.
   Microbench (not an engine run) of the attention's partial kernel for one layer on an RTX 5080, int8 cache, 16 query / 2 KV
   heads, L2 flushed before each call: 4K cells 48 -> 24 us, 32K 95 -> 69, 90K 229 -> 142, 262K 554 -> 361 us; a 3-row window at
   262K 1,550 -> 925 us.
-- **`--fused-prompt-attn`** (the int8 cache, NVIDIA sm_80+, 8 query heads of 256 per KV head; refused with a message otherwise): a
+- **`--fused-prompt-attn`** (**on by default**; `--no-fused-prompt-attn` turns it off. The int8 cache, NVIDIA sm_80+, 8 query heads of 256 per KV head; refused with a message otherwise): a
   prompt chunk of more than 8 rows runs its attention in one kernel straight from the int8 cells (`q36_pattn.cuh`): a block takes
   one KV head and 8 tokens x 8 query heads, dequantises 32 cells at a time into shared memory, multiplies on the FP16 tensor cores
   (`mma.sync`, FP32 sums), keeps the softmax online in registers and splits the cells over blocks when the chunk is small
@@ -294,7 +315,7 @@ on the `strata-q36` command line.
   Fresh prompt read 40K 5,410 -> 5,630 tok/s with `--fused-prompt-attn`, 16K and 4K unchanged; a +2,000-token read on 38K reused
   tokens 431 -> 400 ms. KL against the default path (195 steps, 14K and 57K corpus + 76K agent prompt): mean 1.55e-2, median
   1.5e-3, p99 0.097, max 1.59 (the FP16 kernel alone: 2.06e-2 / 1.6e-3 / 0.094 / 2.67).
-- **`--chunked-gdn`** (NVIDIA, any arch): the prompt's gated delta rule in pieces of 16 tokens instead of one token after another
+- **`--chunked-gdn`** (**on by default**; `--no-chunked-gdn` turns it off. NVIDIA, any arch): the prompt's gated delta rule in pieces of 16 tokens instead of one token after another
   (`q36_gdn.cuh`). The recurrence `S_t = g_t S_{t-1} + k_t delta_t^T` is unrolled over a piece: a kernel computes every piece's
   triangular system `(I + L) delta = b` matrix `L` and the output matrix `P` (they do not depend on the state), then one block per
   (V head, 32 state columns) walks the pieces: `U = K W`, `Q W` and the state update `W <- e^c W + K^T delta` as FP32 products
@@ -309,14 +330,20 @@ on the `strata-q36` command line.
   1.20e-2, median 2.0e-3, p99 0.078, max 0.97 (the 14K prompt: mean 2.3e-2, max 0.97, top-1 58 of 65 steps; the controls are
   `--prefill 1024` with mean 8.9e-3 and max 0.51, and the accepted prefetch opt-ins with mean 2.2e-2 and max 1.95). Chunks of 9-33
   rows are a few microseconds per layer slower than the default kernel. Measured on a Core Ultra 9 285K with 61 GB DDR5-6800.
-- **`--attn-mma`** (with `--gqa-attn --kv int8`, sm_80+; `STRATA_Q36_ATTN_MMA=1` does the same): the decode attention on tensor cores
+- **`--attn-mma`** (**on by default** with `--gqa-attn --kv int8` on sm_80+; `--no-attn-mma` turns it off. `STRATA_Q36_ATTN_MMA=0` also turns
+  it off and `=1` on; the flags win over the variable): the decode attention on tensor cores
   (`part_q8m`): the window's query rows (8 per row) against the int8 cells as fp16 `mma.sync` products with fp32 accumulation, the cache
   read once per window. **Not bit-identical** to the default kernel: q, the softmax weights times the V scale, and the products are
-  rounded to fp16 (about 1e-4 relative), K and V enter as their exact int8 values. A row's result does not depend on the other rows of
+  rounded to fp16 (about 5e-4 relative, 2^-11), K and V enter as their exact int8 values and the K scale stays fp32. A row's result does not depend on the other rows of
   its window, so `--mtp` text equals the plain text. KL against the default kernel over the 14K / 57K / 76K set (65 forced steps each,
-  Sage, RTX 5080): mean 5.7e-3, median 1.1e-3, p99 0.033, max 0.36 (the `--prefill 1024` floor: 8.9e-3, 1.3e-3, 0.09, 0.51).
-  Microbench of the partial kernel for one layer (int8, 16 / 2 heads, L2 flushed): 262K cells 1 row 331 us (the int8 kernel above: 361),
-  a 3-row window 425 us (925), 4 rows 461 us (1,200); 32K cells, 3 rows 76 us (157).
+  Sage, RTX 5080): mean 5.7e-3, median 1.1e-3, p99 0.033, max 0.36, top-1 183 of 195 steps, 2 steps above 0.1 (both at 14K, as in the
+  `--prefill 1024` floor: 8.9e-3, 1.3e-3, 0.09, 0.51). Microbench of the partial kernel for one layer (int8, 16 / 2 heads, L2 flushed):
+  262K cells 1 row 331 us (the int8 kernel above: 361), a 3-row window 425 us (925), 4 rows 461 us (1,200); 32K cells, 3 rows 76 us
+  (157). Engine: decode `--mtp 0`, forced text, +1.3 / +1.4 / +3.0% at 4K / 16K / 40K over the default kernel (which is the
+  gain of one row; at 4K and 16K it is below the 2% bar and comes with the rest); the gain is the verify window at depth: `--mtp 2` at 40K in the
+  deterministic shape (fixed slots, no prefetch) 125.3 tok/s against 117.7 (default kernel) and 116.0 (the first int8 kernel), the
+  same acceptance within a draft or two. The explicit flag without `--gqa-attn`, without `--kv int8`, or below sm_80 does nothing, and the
+  `defaults:` line says why.
 - **`--sample-gpu`** (env `STRATA_Q36_SAMPLE_GPU=1`): a sampled row comes to the host as a shortlist, not as 1 MB of logits. A GPU
   kernels (`k_cand_part`, `k_cand_merge`) return the K highest raw logits of each row (K = `top_k` + the number of distinct ids the penalties touch,
   at most 160; ties: the higher logit, then the lower id), and the host applies the penalties to them and runs the rest of the chain.

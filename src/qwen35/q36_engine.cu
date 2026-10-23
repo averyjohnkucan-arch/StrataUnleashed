@@ -46,6 +46,7 @@
 #include <cuda_runtime.h>
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <atomic>
 #include <chrono>
@@ -5510,6 +5511,87 @@ int serve(Engine& E) {
     return sv.run();
 }
 
+// ---- Defaults.  Every opt-in of this path that measured a gain without a quality loss (class A always; class B when its KL sits
+// inside the controls) is on by default where the hardware and the configuration take it, with a --no-<flag> escape and a log line
+// that says which are on and why the others are not.  One place: a feature joins with a field in DefaultsIn, a row in
+// resolve_defaults() and one assignment in run().  Hard = what the explicit flag needs too (it is refused or ignored otherwise);
+// soft = a configuration the gain was not measured on: only the default stays off there, the explicit flag still works.
+struct DefaultsIn {
+    int cc_major = 0;                 // CUDA compute capability (major); 0: not CUDA (HIP)
+    bool kv_int8 = false;             // --kv int8 (not fp32, fp16 or k8v4)
+    bool gqa_attn = false;            // --gqa-attn
+    int n_head = 0, n_head_kv = 0, head_dim = 0;
+    int ssm_state = 0, ssm_v_heads = 0, ssm_k_heads = 0, ssm_value_dim = 0;
+    int batch = 0;                    // --batch N sessions decoding together
+    int snapshots = 0;                // --snapshots K
+    bool hybrid_certain = false;      // the routed experts cannot all be in VRAM (slots + the CPU pool)
+    std::string kv = "fp32";
+};
+enum { kDfAttnMma, kDfPattn, kDfChunkedGdn, kDfSnapHost, kDfCount };
+struct Dflt {
+    const char* name = "";
+    bool on = false;
+    std::string why;                  // off: the reason; on: "default" or "flag"
+};
+// want: 1 asked for, 0 asked off (the escape), -1 the default decides
+Dflt pick_default(const char* name, int want, const std::string& off_by, const std::string& hard, const std::string& soft) {
+    Dflt d;
+    d.name = name;
+    if (want == 0) { d.why = off_by; return d; }
+    if (!hard.empty()) { d.why = hard; return d; }
+    if (want == 1) { d.on = true; d.why = "flag"; return d; }
+    if (!soft.empty()) { d.why = soft; return d; }
+    d.on = true;
+    d.why = "default";
+    return d;
+}
+std::array<Dflt, kDfCount> resolve_defaults(const DefaultsIn& in, const int (&want)[kDfCount], const std::string (&off_by)[kDfCount]) {
+    std::array<Dflt, kDfCount> r;
+    const std::string sm = "compute capability " + std::to_string(in.cc_major) + ".x, needs sm_80+";
+    const bool heads8 = in.n_head_kv > 0 && in.n_head % in.n_head_kv == 0 && in.n_head / in.n_head_kv == 8 && in.head_dim == 256;
+    const std::string need_int8 = "needs --kv int8, not " + in.kv;
+    {   // the decode attention on tensor cores (q36_attn.cuh part_q8m): mma.sync m16n8k16 is sm_80+, CUDA only, the int8 K / V cells
+        // (k8v4 keeps its own reader), the grouped-query kernel's 8 query heads of 256 per KV head.  Measured: Sage, RTX 5080,
+        // --gqa-attn --kv int8 (single session).  --batch (rows mode) was parity-checked, never run in the engine: not a default.
+        std::string hard, soft;
+        if (in.cc_major == 0) hard = "HIP (CUDA only)";
+        else if (in.cc_major < 8) hard = sm;
+        else if (!in.kv_int8) hard = need_int8;
+        else if (!in.gqa_attn) hard = "needs --gqa-attn";
+        else if (!heads8) hard = "needs 8 query heads of 256 per KV head";
+        if (in.batch > 1) soft = "--batch: rows mode not measured";
+        r[kDfAttnMma] = pick_default("attn-mma", want[kDfAttnMma], off_by[kDfAttnMma], hard, soft);
+    }
+    {   // the prompt attention in one kernel from the int8 cells (q36_pattn.cuh): the same hardware as the explicit flag's refusal in
+        // Engine::init (q36pattn::supported); a prompt chunk of one session, so --batch changes nothing in its path
+        std::string hard;
+        if (!in.kv_int8) hard = need_int8;
+        else if (in.cc_major == 0) hard = "HIP (CUDA only)";
+        else if (in.cc_major < 8) hard = sm;
+        else if (!q36pattn::supported(in.cc_major, in.n_head, in.n_head_kv, in.head_dim)) hard = "needs 8 query heads of 256 per KV head";
+        r[kDfPattn] = pick_default("fused-prompt-attn", want[kDfPattn], off_by[kDfPattn], hard, "");
+    }
+    {   // the prompt's gated delta rule in pieces of 16 tokens (q36_gdn.cuh): FP32 products from shared memory, no tensor cores, any
+        // NVIDIA arch; 128 x 128 states
+        std::string hard;
+        if (in.cc_major == 0) hard = "HIP (CUDA only)";
+        else if (in.ssm_state != 128 || in.ssm_k_heads <= 0 || in.ssm_v_heads % in.ssm_k_heads != 0 ||
+                 in.ssm_value_dim != in.ssm_v_heads * 128)
+            hard = "needs 128 x 128 states";
+        r[kDfChunkedGdn] = pick_default("chunked-gdn", want[kDfChunkedGdn], off_by[kDfChunkedGdn], hard, "");
+    }
+    {   // the snapshots in pinned host memory: a gain only where the VRAM they free goes to expert slots (the hybrid mode), measured with
+        // one session; the copies cost 1.6 ms to the host against 0.15 ms in VRAM
+        std::string hard, soft;
+        if (in.snapshots <= 0) hard = "needs --snapshots K";
+        else if (in.cc_major == 0) hard = "HIP (not measured)";
+        if (in.batch > 1) soft = "--batch: not measured";
+        else if (!in.hybrid_certain) soft = "the experts fit in VRAM: nothing to give to slots";
+        r[kDfSnapHost] = pick_default("snapshot-host", want[kDfSnapHost], off_by[kDfSnapHost], hard, soft);
+    }
+    return r;
+}
+
 }  // namespace
 
 int strata::qwen35::run(int argc, char** argv) {
@@ -5525,6 +5607,7 @@ int strata::qwen35::run(int argc, char** argv) {
     // the opt-ins of this engine path (docs/QWEN36.md): off, they leave the default path as it was
     std::string kv = "fp32", tokens_file, expert_profile, expert_profile_save;
     bool gqa_attn = false, zero_copy = false, snapshot_host = false, fused_pattn = false, chunked_gdn = false, fused_pattn_i8 = false, attn_mma = false, async_swaps = false, async_after = false;
+    bool no_attn_mma = false, no_fused_pattn = false, no_chunked_gdn = false, no_snapshot_host = false;   // the --no-<flag> escapes (resolve_defaults)
     bool lend_staging = kLendDefault, lend_set = false;
     int expert_prefetch = 0, decode_swaps = -1, snapshots = 0, pool_warm = -1, prefetch_copies = -1;
     int64_t snapshot_min = 4096;
@@ -5610,6 +5693,10 @@ int strata::qwen35::run(int argc, char** argv) {
         }
         else if (a == "--async-after-prompt") async_after = true;   // ... and the after-prompt ones
         else if (a == "--snapshot-host") snapshot_host = true;   // the snapshots in pinned host memory: more expert slots
+        else if (a == "--no-attn-mma") no_attn_mma = true;                 // the escapes of the defaults (docs/QWEN36.md): off wins over the flag
+        else if (a == "--no-fused-prompt-attn") no_fused_pattn = true;
+        else if (a == "--no-chunked-gdn") no_chunked_gdn = true;
+        else if (a == "--no-snapshot-host") no_snapshot_host = true;
         else if (serve_mode && a.rfind("--", 0) == 0) {
             // serve passes the config's args plus a few of its own: one this engine does not have is said and skipped
             // (with its value), not fatal
@@ -5622,6 +5709,8 @@ int strata::qwen35::run(int argc, char** argv) {
                          "usage: strata-q36 --model GGUF [--max-context 32768] [--chunk 512] [--no-graph]\n"
                          "       (--serve | --tokens IDS | --tokens-file F [--n 64] [--force IDS] [--dump-full-logits F] | "
                          "--bench-pp N --bench-tg N)\n"
+                         "       on by default where the hardware takes them (docs/QWEN36.md): --attn-mma --fused-prompt-attn --chunked-gdn\n"
+                         "       --snapshot-host; each has a --no-<name> escape\n"
                          "       opt-ins (docs/QWEN36.md): [--kv fp32|fp16|int8|k8v4] [--gqa-attn] [--attn-mma] [--fused-prompt-attn[-i8]] [--chunked-gdn] [--mtp-sampled off|match|q]\n"
                          "       [--spec-min-p P] [--snapshots K] [--snapshot-min N] [--snapshot-host] [--async-swaps]\n"
                          "       [--async-after-prompt] [--lend-staging | --no-lend-staging] [--expert-profile F] [--expert-profile-save F]\n"
@@ -5662,6 +5751,63 @@ int strata::qwen35::run(int argc, char** argv) {
         std::fprintf(stderr, "strata-q36: %s\n", e.what());
         return 1;
     }
+    {   // the defaults of the opt-ins that measured a gain without a quality loss (resolve_defaults): after the flags and the model's
+        // geometry, before the engine reads them
+        DefaultsIn din;
+        int major = 0;
+#if !defined(__HIPCC__)
+        {
+            int dev = 0;
+            if (cudaGetDevice(&dev) == cudaSuccess) CK(cudaDeviceGetAttribute(&major, cudaDevAttrComputeCapabilityMajor, dev));
+        }
+        if (const char* f = std::getenv("STRATA_Q36_DEFAULTS_SM")) {   // a test setting: assume this compute capability (75 or 7)
+            major = std::atoi(f);
+            if (major >= 10) major /= 10;
+        }
+#endif
+        din.cc_major = major;
+        din.kv_int8 = kv == "int8";
+        din.kv = kv;
+        din.gqa_attn = gqa_attn;
+        din.n_head = (int) m.g.n_head;
+        din.n_head_kv = (int) m.g.n_head_kv;
+        din.head_dim = (int) m.g.head_dim;
+        din.ssm_state = (int) m.g.ssm_state_size;
+        din.ssm_v_heads = (int) m.g.ssm_v_heads;
+        din.ssm_k_heads = (int) m.g.ssm_k_heads;
+        din.ssm_value_dim = (int) m.g.ssm_value_dim;
+        din.batch = batch;
+        din.snapshots = snapshots;
+        {   // hybrid for certain: --expert-slots / --expert-vram below the experts' size, or the experts larger than the free VRAM now
+            size_t fr = 0, tot = 0, experts = 0;
+            CK(cudaMemGetInfo(&fr, &tot));
+            for (const Layer& L : m.layers) experts += L.stride * (size_t) m.g.n_expert;
+            din.hybrid_certain = expert_slots > 0 || experts > fr || (expert_vram >= 0 && (double) experts > expert_vram * (double) (1ull << 30));
+        }
+        const int menv = q36attn::mma_env();   // STRATA_Q36_ATTN_MMA: 0 off, 1 on; the flags win over it
+        int want[kDfCount];
+        std::string off_by[kDfCount];
+        want[kDfAttnMma] = no_attn_mma ? 0 : attn_mma ? 1 : menv;
+        off_by[kDfAttnMma] = no_attn_mma ? "--no-attn-mma" : "STRATA_Q36_ATTN_MMA=0";
+        want[kDfPattn] = no_fused_pattn ? 0 : fused_pattn ? 1 : -1;
+        off_by[kDfPattn] = "--no-fused-prompt-attn";
+        want[kDfChunkedGdn] = no_chunked_gdn ? 0 : chunked_gdn ? 1 : -1;
+        off_by[kDfChunkedGdn] = "--no-chunked-gdn";
+        want[kDfSnapHost] = no_snapshot_host ? 0 : snapshot_host ? 1 : -1;
+        off_by[kDfSnapHost] = "--no-snapshot-host";
+        const auto df = resolve_defaults(din, want, off_by);
+        attn_mma = df[kDfAttnMma].on;
+        fused_pattn = df[kDfPattn].on;
+        fused_pattn_i8 = fused_pattn_i8 && fused_pattn;   // (--fused-prompt-attn-i8 stays an explicit opt-in)
+        chunked_gdn = df[kDfChunkedGdn].on;
+        snapshot_host = df[kDfSnapHost].on;
+        std::string line;
+        for (const Dflt& d : df) {
+            if (!line.empty()) line += ", ";
+            line += std::string(d.name) + (d.on ? " on" : " off") + (d.on ? (d.why == "flag" ? " (flag)" : "") : " (" + d.why + ")");
+        }
+        std::fprintf(stderr, "strata-q36: defaults: %s\n", line.c_str());
+    }
     Engine E;
     E.use_graph = graph;
     E.kv8 = kv8;
@@ -5674,7 +5820,7 @@ int strata::qwen35::run(int argc, char** argv) {
     E.fused_pattn = fused_pattn;
     E.fused_pattn_i8 = fused_pattn_i8;
     E.chunked_gdn = chunked_gdn;
-    if (attn_mma) q36attn::mma_enabled() = true;
+    q36attn::mma_enabled() = attn_mma;
     if (decode_swaps >= 0) E.decode_swaps = decode_swaps;
     E.zc = zero_copy;
     E.pf_want = expert_prefetch;
