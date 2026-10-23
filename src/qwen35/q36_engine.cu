@@ -1744,14 +1744,25 @@ struct Engine {
             std::fprintf(stderr, "strata-q36: --fused-prompt-attn needs --kv int8: ignored\n");
             fused_pattn = false;
         }
-#if defined(__HIPCC__)
-        fused_pattn = false;   // (mma.sync: CUDA only)
+        if (fused_pattn) {   // mma.sync on FP16 needs sm_80; the kernel is built for 8 query heads of 256 per KV head
+            int dev = 0, major = 0;
+            CK(cudaGetDevice(&dev));
+#if !defined(__HIPCC__)
+            CK(cudaDeviceGetAttribute(&major, cudaDevAttrComputeCapabilityMajor, dev));
 #endif
+            if (!q36pattn::supported(major, (int) g.n_head, (int) g.n_head_kv, (int) g.head_dim)) {
+                std::fprintf(stderr, "strata-q36: --fused-prompt-attn needs an sm_80+ NVIDIA GPU and 8 query heads of 256 "
+                             "per KV head: ignored\n");
+                fused_pattn = false;
+            }
+        }
         if (!fused_pattn) att_s = dalloc(kAttScoreFloats);
         sk_part = dalloc((size_t) kSplitK * T * (g.n_expert + 1));
         if (!fused_pattn) att_p16 = dalloc_t<__half>(kAttScoreFloats);
         if (fused_pattn) {
-            CK(cudaDeviceGetAttribute(&n_sm, cudaDevAttrMultiProcessorCount, 0));
+            int dev = 0;
+            CK(cudaGetDevice(&dev));
+            CK(cudaDeviceGetAttribute(&n_sm, cudaDevAttrMultiProcessorCount, dev));
             pa_acc = dalloc(q36pattn::partial_acc_floats());
             pa_m = dalloc(q36pattn::kPartialRows);
             pa_l = dalloc(q36pattn::kPartialRows);
@@ -2363,7 +2374,7 @@ struct Engine {
                     <<<dim3(H + HKV, T), kThreads, 0, st>>>(qg, kx, vx, L.q_norm, L.k_norm, q, gate, rows_mode ? nullptr : kc[li],
                                                               rows_mode ? nullptr : vc[li], H, HKV, HD, m->n_rot, dpos, ctx,
                                                               m->rope_base, m->eps, d_delta, mtab_now, rs);
-            if (T > kGemmT && fused_pattn) {
+            if (T > kGemmT && fused_pattn) {   // (never set under HIP: init clears it)
                 // --fused-prompt-attn: the whole attention of the chunk in one kernel from the int8 cells (q36_pattn.cuh)
                 CK(q36pattn::launch(q, reinterpret_cast<const q36attn::q8_cell*>(kc[li]),
                                     reinterpret_cast<const q36attn::q8_cell*>(vc[li]), ctx, H, HKV, T, (int) p0, att,
@@ -3531,7 +3542,8 @@ bool place_experts(Model& m, Engine& E, double vram_gib, int threads, int hybrid
     for (const auto& pk : m.packed) packed_bytes += std::get<2>(pk);
     size_t main_need = 0;   // the main layers' experts (the MTP block's can go to the CPU, see below)
     for (Layer& L : m.layers) main_need += L.stride * (size_t) ne + kMmqTail;
-    const size_t slack = ((size_t) 512 << 20) + (E.kAttScoreFloats - ((size_t) 16 << 20)) * 6;   // reserve + scores
+    const size_t att_bufs = E.fused_pattn ? 0 : (E.kAttScoreFloats - ((size_t) 16 << 20)) * 6;   // (--fused-prompt-attn: none)
+    const size_t slack = ((size_t) 512 << 20) + att_bufs;   // reserve + scores
     const bool mtp_cpu_ok = m.has_mtp && std::getenv("STRATA_Q36_NO_MTP_CPU") == nullptr;
     if (slots <= 0 && vram_gib < 0 && total > budget && packed_bytes > 0 &&
         (total <= budget + packed_bytes || (mtp_cpu_ok && main_need <= budget + packed_bytes + slack)) &&
@@ -3558,7 +3570,7 @@ bool place_experts(Model& m, Engine& E, double vram_gib, int threads, int hybrid
     for (Layer& L : m.layers) total_main += L.stride * (size_t) ne + kMmqTail;
     bool mtp_only = false;
     if (slots <= 0 && vram_gib < 0 && m.has_mtp && total > budget2 && std::getenv("STRATA_Q36_NO_MTP_CPU") == nullptr) {
-        const size_t att_save = (E.kAttScoreFloats - ((size_t) 16 << 20)) * 6;   // att_s (4 B) + att_p16 (2 B)
+        const size_t att_save = att_bufs;   // att_s (4 B) + att_p16 (2 B)
         const size_t small_reserve = (size_t) 256 << 20;
         const size_t room = fr + att_save > small_reserve ? fr + att_save - small_reserve : 0;
         if (total_main + ((size_t) 64 << 20) <= budget2) {

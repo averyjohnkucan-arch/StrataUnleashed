@@ -28,20 +28,30 @@ __device__ __forceinline__ uint32_t pack_h2(float a, float b) {
     const __half2 h = __floats2half2_rn(a, b);
     return *reinterpret_cast<const uint32_t*>(&h);
 }
+// (mma.sync m16n8k16 on FP16 and ldmatrix need sm_80: below it the kernel bodies are empty and the engine refuses the flag)
+#if !defined(__CUDA_ARCH__) || __CUDA_ARCH__ >= 800
+#define Q36_PATTN_ARCH 1
+#endif
 __device__ __forceinline__ void mma16816(float* c, const uint32_t* a, uint32_t b0, uint32_t b1) {
+#ifdef Q36_PATTN_ARCH
     asm volatile("mma.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32 {%0,%1,%2,%3}, {%4,%5,%6,%7}, {%8,%9}, {%0,%1,%2,%3};\n"
                  : "+f"(c[0]), "+f"(c[1]), "+f"(c[2]), "+f"(c[3])
                  : "r"(a[0]), "r"(a[1]), "r"(a[2]), "r"(a[3]), "r"(b0), "r"(b1));
+#endif
 }
 __device__ __forceinline__ void ldsm4(uint32_t* r, const void* p) {
+#ifdef Q36_PATTN_ARCH
     const uint32_t a = (uint32_t) __cvta_generic_to_shared(p);
     asm volatile("ldmatrix.sync.aligned.m8n8.x4.shared.b16 {%0,%1,%2,%3}, [%4];\n"
                  : "=r"(r[0]), "=r"(r[1]), "=r"(r[2]), "=r"(r[3]) : "r"(a));
+#endif
 }
 __device__ __forceinline__ void ldsm4t(uint32_t* r, const void* p) {
+#ifdef Q36_PATTN_ARCH
     const uint32_t a = (uint32_t) __cvta_generic_to_shared(p);
     asm volatile("ldmatrix.sync.aligned.m8n8.x4.trans.shared.b16 {%0,%1,%2,%3}, [%4];\n"
                  : "=r"(r[0]), "=r"(r[1]), "=r"(r[2]), "=r"(r[3]) : "r"(a));
+#endif
 }
 
 // A cell's 16 int8 values (a uint4) of 32-value block scale d, into two 16-byte shared chunks (8 halves each) of a tile
@@ -67,6 +77,7 @@ __global__ void __launch_bounds__(kThreads, 2)
 pattn(const float* __restrict__ q, const q8_cell_t* __restrict__ kc, const q8_cell_t* __restrict__ vc, int ctx, int H,
       int T, int p0, int split, int nsplit, float scale_log2, float* __restrict__ out, float* __restrict__ pacc,
       float* __restrict__ pm, float* __restrict__ pl) {
+#ifdef Q36_PATTN_ARCH
     __shared__ __align__(16) __half Ks[BC * HD];
     __shared__ __align__(16) __half Vs[BC * HD];
     const int tid = threadIdx.x, lane = tid & 31, w = tid >> 5, g = lane >> 2, qd = lane & 3;
@@ -165,12 +176,12 @@ pattn(const float* __restrict__ q, const q8_cell_t* __restrict__ kc, const q8_ce
 #pragma unroll
         for (int nt = 0; nt < 4; ++nt) {
             const float muA = m[0] == -INFINITY ? 0.f : m[0], muB = m[1] == -INFINITY ? 0.f : m[1];
-            const float p0_ = exp2f(s[nt][0] - muA), p1_ = exp2f(s[nt][1] - muA);
-            const float p2_ = exp2f(s[nt][2] - muB), p3_ = exp2f(s[nt][3] - muB);
-            l[0] += p0_ + p1_;
-            l[1] += p2_ + p3_;
-            pa[nt >> 1][(nt & 1) * 2] = pack_h2(p0_, p1_);
-            pa[nt >> 1][(nt & 1) * 2 + 1] = pack_h2(p2_, p3_);
+            const float pe0 = exp2f(s[nt][0] - muA), pe1 = exp2f(s[nt][1] - muA);
+            const float pe2 = exp2f(s[nt][2] - muB), pe3 = exp2f(s[nt][3] - muB);
+            l[0] += pe0 + pe1;
+            l[1] += pe2 + pe3;
+            pa[nt >> 1][(nt & 1) * 2] = pack_h2(pe0, pe1);
+            pa[nt >> 1][(nt & 1) * 2 + 1] = pack_h2(pe2, pe3);
         }
 #pragma unroll
         for (int i = 0; i < 32; ++i) {
@@ -222,6 +233,7 @@ pattn(const float* __restrict__ q, const q8_cell_t* __restrict__ kc, const q8_ce
             }
         }
     }
+#endif
 }
 
 /// out [T][H][HD] = the splits' partials joined (base-2 max / sum as `pattn` writes them). Grid (T * H), block 256.
@@ -245,6 +257,11 @@ __global__ void merge(const float* __restrict__ pacc, const float* __restrict__ 
 constexpr size_t kPartialRows = 16384;
 inline size_t partial_acc_floats() { return kPartialRows * HD; }
 
+/// The flag needs an sm_80+ device and the 16 / 2 x 256 head layout the kernel is built for (G query heads per KV head).
+inline bool supported(int major, int n_head, int n_head_kv, int head_dim) {
+    return major >= 8 && head_dim == HD && n_head_kv > 0 && n_head == G * n_head_kv;
+}
+
 /// Launch: attention of the T query rows (positions p0 ..) over the int8 cache cells (rows ctx cells apart per KV
 /// head). `pacc/pm/pl`: scratch for the splits (partial_acc_floats(), kPartialRows, kPartialRows), may be null when
 /// the grid alone fills the card (then no split is used).
@@ -264,5 +281,17 @@ inline cudaError_t launch(const float* q, const q8_cell_t* kc, const q8_cell_t* 
     return cudaGetLastError();
 }
 
+}  // namespace q36pattn
+#else
+// HIP: no mma.sync kernel; the engine refuses the flag there (the references in q36_engine.cu still have to compile)
+#include <cuda_runtime.h>
+namespace q36pattn {
+constexpr size_t kPartialRows = 16384;
+inline size_t partial_acc_floats() { return 0; }
+inline bool supported(int, int, int, int) { return false; }
+inline cudaError_t launch(const float*, const void*, const void*, int, int, int, int, int, float*, float*, float*, float*, int,
+                          cudaStream_t) {
+    return cudaErrorNotSupported;
+}
 }  // namespace q36pattn
 #endif

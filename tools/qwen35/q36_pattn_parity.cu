@@ -1,7 +1,7 @@
 // tools/qwen35/q36_pattn_parity.cu - src/qwen35/q36_pattn.cuh (the fused prompt attention from the int8 cache) against a
 // double-precision oracle on sampled rows, next to the engine's current prompt path (FP16 copies of K / V, cuBLAS Q K^T,
 // causal softmax to FP16, cuBLAS P V) on the same data, and the time of both for one attention layer. Synthetic cells,
-// no model. Cases (T rows after p0 cached cells): small and large T, P up to 262144.
+// no model (the quick ctest case fills 2 x 20480 cells on the host; the full run 2 x 262144). Cases (T rows after p0 cached cells): small and large T, P up to 262144.
 #include "../../src/qwen35/q36_pattn.cuh"
 #include <cublas_v2.h>
 #include <algorithm>
@@ -139,7 +139,10 @@ static Err compare(const std::vector<float>& got, const std::vector<std::vector<
 }
 
 int main(int argc, char** argv) {
-    int n_sm = 0;
+    int ndev = 0, major = 0, n_sm = 0;
+    if (cudaGetDeviceCount(&ndev) != cudaSuccess || ndev == 0) { std::printf("q36_pattn_parity: no GPU, skipped\n"); return 77; }
+    CK(cudaDeviceGetAttribute(&major, cudaDevAttrComputeCapabilityMajor, 0));
+    if (major < 8) { std::printf("q36_pattn_parity: needs sm_80+, skipped\n"); return 77; }
     CK(cudaDeviceGetAttribute(&n_sm, cudaDevAttrMultiProcessorCount, 0));
     const bool quick = argc > 1 && std::atoi(argv[1]) == 1;   // ctest: small cases only
     const int CTX = quick ? 20480 : 262144;
@@ -189,6 +192,7 @@ int main(int argc, char** argv) {
         CK(cudaMemcpy(go.data(), dop, go.size() * 4, cudaMemcpyDeviceToHost));
         // oracle on sampled rows (double, the cells' dequantised values, Q as given in FP32)
         std::vector<std::pair<int, int>> rows = {{0, 0}, {c.T - 1, H - 1}, {c.T / 2, 3}, {std::min(c.T - 1, 5), 9}, {c.T - 1, 0}};
+        for (int k = 1; k < 8 && k < c.T; ++k) rows.push_back({c.T - 1 - k, (k * 5 + 1) % H});   // the last rows (the token-pair split at the end)
         std::vector<std::vector<double>> ref;
         for (auto& rw : rows) {
             const int t = rw.first, h = rw.second, kvh = h / (H / HKV), n = c.p0 + t + 1;
