@@ -4052,7 +4052,7 @@ bool place_experts(Model& m, Engine& E, double vram_gib, int threads, int hybrid
     CK(cudaEventCreateWithFlags(&E.ev_route, cudaEventDisableTiming));
     if (staging) {
         CK(cudaStreamCreateWithFlags(&E.cst, cudaStreamNonBlocking));
-#if !defined(STRATA_USE_HIP) && !defined(STRATA_HIP_GFX906) && !defined(__HIPCC__)   // (HIP: the default priority, as mtp.cpp)
+#if !defined(STRATA_USE_HIP) && !defined(STRATA_HIP_GFX906) && !defined(__HIPCC__)   // (HIP: the default priority; the chain lane's side stream does the same)
         {   // the resident experts' copies (kernels, see stream_kick) at the highest priority
             int prio_lo = 0, prio_hi = 0;
             if (cudaDeviceGetStreamPriorityRange(&prio_lo, &prio_hi) != cudaSuccess) { cudaGetLastError(); prio_hi = 0; }   // (no priorities: a plain stream)

@@ -199,8 +199,9 @@ __global__ void dequant_kernel(const uint8_t* __restrict__ blocks, int64_t row_b
 // one 16-byte store (two for FP32), so a warp writes 512 consecutive bytes.  The arithmetic per value is group32's -
 // the same expression on the same operands - so the output is bitwise the same (dequant_wide_parity).  On the P40:
 // Q6_K 7.2 -> 0.33 ms (227 GB/s), Q4_K 1.67 -> 0.32 ms, Q5_K 1.24 -> 0.33 ms, IQ4_XS 1.21 -> 0.34 ms for that shape.
-// Q4_K, Q5_K, Q6_K and IQ4_XS.  On by default on compute capability 6.1, where it was measured;
-// STRATA_DEQUANT_WIDE=0 / =1 turns it off / on for every card (on by default from compute capability 8.0).
+// Q4_K, Q5_K, Q6_K and IQ4_XS.  On by default on CUDA compute capability 6.1 (measured on a P40), 8.6 (RTX 3060 / A4000) and
+// 12.0 (RTX 5080); 8.0 / 8.9 / 9.0 (A100, Ada, Hopper) take it on the bit-identity argument only, not measured.  Never by
+// default on HIP.  STRATA_DEQUANT_WIDE=0 / =1 turns it off / on for every card.
 __device__ __forceinline__ uint64_t ld8(const uint8_t* p) {   // 8 bytes at a 2-byte aligned address
     const uint16_t* q = reinterpret_cast<const uint16_t*>(p);
     return (uint64_t) q[0] | ((uint64_t) q[1] << 16) | ((uint64_t) q[2] << 32) | ((uint64_t) q[3] << 48);
@@ -285,7 +286,10 @@ bool dequant_wide_on() {
     static const int env = [] { const char* v = std::getenv("STRATA_DEQUANT_WIDE"); return v != nullptr && v[0] != '\0' ? (std::atoi(v) != 0 ? 1 : 0) : -1; }();
     if (g_dequant_wide >= 0) return g_dequant_wide != 0;
     if (env >= 0) return env != 0;
-    static int per_dev[64];   // 0 unknown, 1 no, 2 yes: sm_61 (measured on a Tesla P40), sm_86 (RTX 3060 / A4000, 0.1.45: short-prompt TTFT -12..-17%, bitwise), sm_80 and up (RTX 5080 sm_120: pp +6..8%, bitwise)
+#if defined(__HIPCC__)
+    return false;   // HIP: not measured; STRATA_DEQUANT_WIDE=1 opts in
+#endif
+    static int per_dev[64];   // 0 unknown, 1 no, 2 yes: sm_61 (measured on a Tesla P40), sm_86 (RTX 3060 / A4000, 0.1.45: short-prompt TTFT -12..-17%, bitwise), sm_80 and up (RTX 5080 sm_120: pp +6..8%, bitwise; sm_80 / 89 / 90 not measured)
     int dev = 0;
     if (cudaGetDevice(&dev) != cudaSuccess || dev < 0 || dev >= 64) { (void) cudaGetLastError(); return false; }
     if (!per_dev[dev]) {

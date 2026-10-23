@@ -2529,7 +2529,7 @@ unless noted; the gain is small on these two cards and larger on the Turing card
 `STRATA_DEQUANT_WIDE` (the wide dequantization of Q4_K / Q5_K / Q6_K / IQ4_XS for the prompt's dense weights) is now on by default on
 sm_86 as well as sm_61: bit-exact, and the time to the first token of a 150 / 300 / 450-token prompt fell 11-15% on the RTX 3060 and 6-10% on the RTX A4000 (5 of 5 pairs each).
 `STRATA_DEQUANT_WIDE=0` turns it off.
-It is on from compute capability 8.0 up too (Ada, Hopper, Blackwell): the RTX 5080 (sm_120) prompt read of the Sage-A1.5 Q4_K_M hybrid path went from 6,574 / 6,147 / 4,686 to 7,078 / 6,647 / 4,967 tok/s at 4K / 16K / 40K, the logits byte-identical.
+It is on from CUDA compute capability 8.0 up too (never by default on HIP, where `STRATA_DEQUANT_WIDE=1` opts in). Measured only on the RTX 5080 (sm_120) besides the cards above; A100 (8.0), Ada (8.9) and Hopper (9.0) take it on the bit-identity argument (`dequant_wide_parity`, 360 cases) and have not been timed. On the RTX 5080, Sage-A1.5 Q4_K_M in the hybrid mode (78 of 256 experts per layer resident, int8 KV, `--max-context 262144`, CLI, one fresh prompt read per depth), the prompt read went from 6,574 / 6,147 / 4,686 tok/s (one run) to 7,079 / 6,653 / 4,971 tok/s (first of two runs; the second 7,029 / 6,653 / 4,979) at 4K / 16K / 40K, the logits byte-identical (`--dump-full-logits` at 4K and 14K).
 
 ### RTX 20 (Turing, sm_75) kernel series (opt-in, 0.1.45)
 
