@@ -289,6 +289,9 @@ on the `strata-q36` command line.
   speculative window's rows and the drafts of `--mtp-sampled q` use it too, one copy of a few KB per window instead of one MB
   per row. `STRATA_Q36_SAMPLE_PROFILE=1` logs the sampler's host time per request; `STRATA_Q36_SAMPLE_CHECK=1` checks every
   shortlist against the whole row (slow; a test aid).
+- **`--random-seed`** (env `STRATA_Q36_RANDOM_SEED=1`): a sampled request that gives no `seed` gets a fresh one (logged as
+  `sampling seed N`). Without it an unseeded request uses seed 0, so the same prompt gives the same text every time, which also
+  means a client that retries a prompt at temperature 1.0 gets the same answer again. A request with a `seed` is unchanged.
 - **`--mtp-sampled match | q`** (with `--mtp N`): sampled requests draft with the MTP block too (without it only greedy ones do).
   `match` drafts the block's greedy pick and keeps each window row's token as a plain decode step samples it, so a fixed seed gives the
   same text as without drafts (until a near tie falls the other way in the last bits); `q` samples the drafts from the block's own

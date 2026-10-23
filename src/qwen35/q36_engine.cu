@@ -1418,6 +1418,7 @@ struct Engine {
     int32_t *ids, *grp_start, *n_groups, *ent_dst, *ent_tok, *tok, *pos0, *pick;
     // --sample-gpu: a sampled row comes to the host as a shortlist (k_cand_part, k_cand_merge), not as 1 MB of logits
     bool sample_gpu = false;
+    bool random_seed = false;   // --random-seed: a sampled request without a seed gets a fresh one (default: seed 0)
     Cand2 *d_cand = nullptr, *h_cand = nullptr, *d_part = nullptr;   // [kVerify + 1][K] the shortlists (device, pinned host)
     int cand_K = 0;
     bool smp_prof = false, smp_check = false;     // STRATA_Q36_SAMPLE_PROFILE / STRATA_Q36_SAMPLE_CHECK
@@ -4543,7 +4544,7 @@ struct Serve {
             else if (key == "penalty_repeat") smp.repeat = std::strtof(v, nullptr);
             else if (key == "penalty_freq") smp.freq = std::strtof(v, nullptr);
             else if (key == "penalty_present") smp.present = std::strtof(v, nullptr);
-            else if (key == "seed") smp.seed = std::strtoull(v, nullptr, 10);
+            else if (key == "seed") { smp.seed = std::strtoull(v, nullptr, 10); smp.seeded = true; }
             else if (key == "img_keys") {
                 const char* q = v;
                 img_keys.clear();
@@ -4655,6 +4656,12 @@ struct Serve {
             if (adm) std::printf("BADM %d 0\n", slot);
             std::fflush(stdout);
             return;
+        }
+        // --random-seed: a sampled request that gave no seed gets a fresh one (without it: seed 0, the same stream every time)
+        if (E.random_seed && !smp.seeded && smp.needs_logits()) {
+            static std::atomic<unsigned long long> n_seeded{0};
+            smp.seed = (std::random_device{}() ^ ((unsigned long long) std::random_device{}() << 32)) + ++n_seeded;
+            std::fprintf(stderr, "strata serve: session %d: sampling seed %llu (--random-seed)\n", s, smp.seed);
         }
         std::mt19937_64 rng(smp.seed);
         std::vector<int32_t> hist = ids;
@@ -4873,7 +4880,7 @@ int strata::qwen35::run(int argc, char** argv) {
     double expert_vram = -1.0;
     bool warm = true;
     int expert_slots = 0, batch = 0, draft_vocab = -1, mtp_sampled = 0;
-    bool sample_gpu = false;
+    bool sample_gpu = false, random_seed = false;
     float spec_min_p = 0.f;
     bool serve_mode = false, graph = true, vision = false, batch_mtp = false;
     // the opt-ins of this engine path (docs/QWEN36.md): off, they leave the default path as it was
@@ -4920,6 +4927,7 @@ int strata::qwen35::run(int argc, char** argv) {
             if (mtp_sampled < 0) { std::fprintf(stderr, "strata-q36: --mtp-sampled takes off, match or q\n"); return 2; }
         }
         else if (a == "--sample-gpu") sample_gpu = true;       // sampled rows come to the host as GPU shortlists (K highest logits)
+        else if (a == "--random-seed") random_seed = true;     // a sampled request without a seed gets a fresh one
         else if (a == "--spec-min-p") spec_min_p = (float) std::atof(next().c_str());   // the main path's name: the gate
         else if (a == "--draft-vocab") draft_vocab = std::atoi(next().c_str());   // the MTP drafts pick among the first N token ids
         else if (a == "--vision") vision = true;                                  // pictures (GENI): the encoder is strata-vision's
@@ -4957,7 +4965,7 @@ int strata::qwen35::run(int argc, char** argv) {
                          "--bench-pp N --bench-tg N)\n"
                          "       opt-ins (docs/QWEN36.md): [--kv fp32|fp16|int8|k8v4] [--gqa-attn] [--attn-mma] [--fused-prompt-attn[-i8]] [--chunked-gdn] [--mtp-sampled off|match|q]\n"
                          "       [--spec-min-p P] [--snapshots K] [--snapshot-min N] [--snapshot-host] [--expert-profile F] [--expert-profile-save F]\n"
-                         "       [--expert-prefetch P] [--hybrid-zero-copy] [--decode-swaps N] [--sample-gpu]\n");
+                         "       [--expert-prefetch P] [--hybrid-zero-copy] [--decode-swaps N] [--sample-gpu] [--random-seed]\n");
             return 2;
         }
     }
@@ -5116,6 +5124,7 @@ int strata::qwen35::run(int argc, char** argv) {
     E.mtp_sampled = mtp_sampled;
     const auto env_on = [](const char* k) { const char* v = std::getenv(k); return v != nullptr && *v != '\0' && std::strcmp(v, "0") != 0; };
     E.sample_gpu = sample_gpu || env_on("STRATA_Q36_SAMPLE_GPU");
+    E.random_seed = random_seed || env_on("STRATA_Q36_RANDOM_SEED");
     E.smp_prof = env_on("STRATA_Q36_SAMPLE_PROFILE");
     E.smp_check = env_on("STRATA_Q36_SAMPLE_CHECK");
     if (E.sample_gpu && E.smp_check) E.cand_selftest();
