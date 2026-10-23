@@ -2433,7 +2433,8 @@ struct Engine {
         // a decode batch of up to 8 rows takes the router and the shared expert's gate in one product too (rows of 257) when the fused
         // router follows; the prompt chunks and the checks keep the separate products
         const bool ext = one || (fast_k && std::getenv("STRATA_Q36_NO_EXT") == nullptr && !verify_k && T <= kGemmT && g.n_expert == 256 && Kp == 8);
-        if (pf_slots && T <= kPfRows && li + 1 < m->layers.size() && lhy(li + 1)) {
+        // (the next layer takes the hybrid rows path only for T <= hybrid_t: a bigger batch streams its experts, a prediction would be wasted)
+        if (pf_slots && T <= std::min<int>(kPfRows, hybrid_t) && li + 1 < m->layers.size() && lhy(li + 1)) {
             // --expert-prefetch: the next layer's router on this layer's MoE input, on pst beside this layer's experts,
             // into mapped host memory; the stream waits for it before h is rewritten (pf_join)
             CK(cudaEventRecord(ev_pf0, st));
