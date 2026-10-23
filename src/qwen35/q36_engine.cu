@@ -1584,8 +1584,8 @@ struct Engine {
     uint8_t* acts = nullptr;   // per token: its quantized activation (kNativeActBytes)
     cudaEvent_t ev_route = nullptr;
     uint8_t* stage[2] = {};
-    cudaStream_t cst = nullptr;
-    cudaEvent_t ev_copy[2] = {}, ev_used[2] = {};
+    cudaStream_t cst = nullptr, dst2 = nullptr;
+    cudaEvent_t ev_copy[2] = {}, ev_used[2] = {}, ev_d2d[2] = {};
     std::vector<int> stream_seq;   // the state indices a streamed forward visits, in order
     int stream_pos = 0;
     long long hy_cpu = 0, hy_gpu = 0, hy_swaps = 0;   // entries computed on the CPU / GPU, slot replacements
@@ -2813,11 +2813,15 @@ struct Engine {
         static const bool all = std::getenv("STRATA_Q36_STREAM_ALL") != nullptr;
         const int ne = (int) m->g.n_expert;
         const Hy& H = hy[(size_t) stream_seq[(size_t) i]];
-        // fewer than half the experts resident (a 12 GB card): the one whole-layer copy is faster than many small ones
-        // (RTX 3060, UD-Q4_K_XL at 37 of 256: pp2048 1970 whole vs 1540 in runs)
-        if (all || 2 * L.n_slots < ne) {
+        // fewer than 1/8 of the experts resident: the one whole-layer copy.  A device-to-device copy is a kernel: queued on
+        // the copy stream it waits for the compute kernels' SMs and holds up the PCIe copies behind it (RTX 5080, 78 of 256
+        // resident, 16K: pp 4570 t/s in runs on one stream, 5760 whole, 6090 with the resident runs on their own
+        // high-priority stream; 38 of 256: 5930 vs 5780 whole).  The first version, 37 of 256 on an RTX 3060, lost
+        // to the whole-layer copy with both kinds on one stream (pp2048 1970 whole vs 1540 in runs)
+        if (all || 8 * L.n_slots < ne) {
             CK(cudaMemcpyAsync(stage[b], L.hblobs, L.stride * (size_t) ne, cudaMemcpyHostToDevice, cst));
         } else {
+            CK(cudaStreamWaitEvent(dst2, ev_used[b], 0));
             for (int x = 0; x < ne;) {
                 const bool dev = H.slot_of[(size_t) x] >= 0;
                 int y = x + 1;
@@ -2828,12 +2832,14 @@ struct Engine {
                 const size_t n = (size_t) (y - x) * L.stride;
                 if (dev)
                     CK(cudaMemcpyAsync(stage[b] + (size_t) x * L.stride, L.blobs + (size_t) H.slot_of[(size_t) x] * L.stride,
-                                       n, cudaMemcpyDeviceToDevice, cst));
+                                       n, cudaMemcpyDeviceToDevice, dst2));
                 else
                     CK(cudaMemcpyAsync(stage[b] + (size_t) x * L.stride, L.hblobs + (size_t) x * L.stride, n,
                                        cudaMemcpyHostToDevice, cst));
                 x = y;
             }
+            CK(cudaEventRecord(ev_d2d[b], dst2));
+            CK(cudaStreamWaitEvent(cst, ev_d2d[b], 0));
         }
         CK(cudaEventRecord(ev_copy[b], cst));
     }
@@ -4035,8 +4041,12 @@ bool place_experts(Model& m, Engine& E, double vram_gib, int threads, int hybrid
     E.acts = (uint8_t*) std::malloc(T * C::kNativeActBytes + 64);
     CK(cudaEventCreateWithFlags(&E.ev_route, cudaEventDisableTiming));
     if (staging) {
+        int prio_lo = 0, prio_hi = 0;
+        if (cudaDeviceGetStreamPriorityRange(&prio_lo, &prio_hi) != cudaSuccess) { cudaGetLastError(); prio_hi = 0; }   // (no priorities: a plain stream)
         CK(cudaStreamCreateWithFlags(&E.cst, cudaStreamNonBlocking));
+        CK(cudaStreamCreateWithPriority(&E.dst2, cudaStreamNonBlocking, prio_hi));   // the resident experts' copies (kernels, see stream_kick)
         for (int b = 0; b < 2; ++b) {
+            CK(cudaEventCreateWithFlags(&E.ev_d2d[b], cudaEventDisableTiming));
             CK(cudaMalloc(&E.stage[b], max_layer + kMmqTail));
             CK(cudaMemset(E.stage[b], 0, max_layer + kMmqTail));
             CK(cudaEventCreateWithFlags(&E.ev_copy[b], cudaEventDisableTiming));
