@@ -508,7 +508,7 @@ inline bool& mma_enabled() {
 template<class Rows>
 inline void launch_part_q8m(const float* q, const q8_cell* kc, const q8_cell* vc, const int32_t* pos0, int t0, int nt, int H,
                             int HKV, int ctx, float scale, int nc, int chunks, float* pacc, float* pm, float* pl, Rows rs,
-                            bool one_row, cudaStream_t st, int rows_cap);
+                            bool one_row, cudaStream_t st, int rows_cap = 0);
 
 template<int R, class VC, class Rows>
 inline void launch_part_q8x_r(const float* q, const q8_cell* kc, const VC* vc, const int32_t* pos0, int rb, int rows, int t0,
@@ -787,7 +787,7 @@ inline void launch_part_q8m_r(const float* q, const q8_cell* kc, const q8_cell* 
 template<class Rows>
 inline void launch_part_q8m(const float* q, const q8_cell* kc, const q8_cell* vc, const int32_t* pos0, int t0, int nt, int H,
                             int HKV, int ctx, float scale, int nc, int chunks, float* pacc, float* pm, float* pl, Rows rs,
-                            bool one_row, cudaStream_t st, int rows_cap = 0) {
+                            bool one_row, cudaStream_t st, int rows_cap) {
     const int rcap = std::max(1, std::min(one_row ? 1 : (rows_cap > 0 ? rows_cap : 4), 4));
     for (int rb = t0, rem = nt; rem > 0;) {
         const int R = std::min(rem, rcap), rows = rem / R * R;
