@@ -62,6 +62,8 @@ template<> std::vector<q36attn::q8_cell> store(const std::vector<float>& x, std:
         }
     return s;
 }
+bool skip_x = false;   // below sm_80 the launcher never picks part_q8x: no comparison with it
+bool small = false;    // `q36_attn_parity small`: without the 262144-cell cases (sanitizer runs)
 bool q8_own = false;   // the int8 cache through part_q8 (what the engine runs), else part<q8_cell>
 bool k8v4 = false;     // with q8_own: V as rotated q4_0 (q36attn::q4_cell, --kv k8v4), quantized by kv4_store on the GPU
 template<class KV> const char* name() {
@@ -156,7 +158,7 @@ template<class KV> void run(int ctx, int group, int tokens, bool sessions, cudaS
     CK(cudaGetLastError());
     CK(cudaStreamSynchronize(stream));
     if constexpr (q8) {
-        if (q8_own) {
+        if (q8_own && !skip_x) {
             // part_q8x (the engine's kernel: cache tiles through shared memory, R window rows per block) against part_q8 above:
             // every partial it writes must have the same bits, for each cap on the rows per block; the last launch stays
             // in the buffers for the checks below (the default cap)
@@ -284,27 +286,35 @@ template<class KV> void run(int ctx, int group, int tokens, bool sessions, cudaS
         CK(cudaFree((void*) rows.kc)); CK(cudaFree((void*) rows.vc));
     }
 }
-int main() {
+int main(int argc, char** argv) {
     using q8 = q36attn::q8_cell;
-    // ctest skips (SKIP_RETURN_CODE 77) without a device, and below sm_80 (part_q8x streams the cache with cp.async)
+    // ctest skips (SKIP_RETURN_CODE 77) without a device
     int ndev = 0, major = 0;
     if (cudaGetDeviceCount(&ndev) != cudaSuccess || ndev == 0) { std::puts("SKIP: no GPU"); return 77; }
     CK(cudaDeviceGetAttribute(&major, cudaDevAttrComputeCapabilityMajor, 0));
-    if (major < 8) { std::printf("SKIP: sm_%d0 (< sm_80)\n", major); return 77; }
+    if (major < 8) { skip_x = true; std::printf("sm_%d0 (< sm_80): part_q8x is not compared (the launcher keeps part_q8)\n", major); }
+    small = argc > 1 && std::strcmp(argv[1], "small") == 0;   // `small`: no 262144-cell cases (sanitizer runs)
     cudaStream_t stream; CK(cudaStreamCreate(&stream));
     run<float>(5, 1, 1, false, stream); run<__half>(5, 1, 1, false, stream); run<q8>(5, 1, 1, false, stream);
     run<float>(257, 8, 3, true, stream); run<__half>(257, 8, 3, true, stream); run<q8>(257, 8, 3, true, stream);
     run<float>(4096, 8, 3, false, stream); run<__half>(4096, 8, 3, false, stream); run<q8>(4096, 8, 3, false, stream);
     // a partial last tile and chunk (n % 8 != 0, n % 256 != 0) with G = 8 and 8 query rows (a verify window)
     run<float>(1000, 8, 8, false, stream); run<q8>(1000, 8, 8, false, stream);
-    run<float>(262144, 8, 1, false, stream); run<__half>(262144, 8, 1, false, stream); run<q8>(262144, 8, 1, false, stream);
+    if (!small) { run<float>(262144, 8, 1, false, stream); run<__half>(262144, 8, 1, false, stream); run<q8>(262144, 8, 1, false, stream); }
     q8_own = true;   // the engine's int8 kernel, the same cases, plus groups below 8
     run<q8>(5, 1, 1, false, stream); run<q8>(257, 8, 3, true, stream); run<q8>(4096, 8, 3, false, stream);
     run<q8>(1000, 8, 8, false, stream); run<q8>(4096, 4, 3, false, stream); run<q8>(257, 2, 3, true, stream);
-    run<q8>(262144, 8, 1, false, stream);
+    // windows whose rows cross a 256-cell chunk boundary (row 0 on the last cells of chunk 0, the others in chunk 1), and the
+    // 4 + remainder splits of 5, 6 and 7 rows (pos = ctx - tokens)
+    run<q8>(257, 8, 3, false, stream); run<q8>(258, 8, 4, false, stream); run<q8>(259, 8, 5, false, stream);
+    run<q8>(260, 8, 6, false, stream); run<q8>(261, 8, 7, false, stream); run<q8>(264, 8, 8, false, stream);
+    run<q8>(257, 8, 2, false, stream); run<q8>(513, 8, 3, false, stream); run<q8>(515, 8, 5, false, stream);
+    if (!small) run<q8>(262144, 8, 1, false, stream);
     k8v4 = true;   // --kv k8v4: int8 K, rotated q4_0 V stored by the GPU's kv4_store; the decode tail rotates back
     run<q8>(5, 1, 1, false, stream); run<q8>(257, 8, 3, true, stream); run<q8>(4096, 8, 3, false, stream);
     run<q8>(1000, 8, 8, false, stream); run<q8>(4096, 4, 3, false, stream); run<q8>(257, 2, 3, true, stream);
-    run<q8>(262144, 8, 1, false, stream);
+    run<q8>(257, 8, 3, false, stream); run<q8>(259, 8, 5, false, stream); run<q8>(261, 8, 7, false, stream);
+    run<q8>(264, 8, 8, false, stream); run<q8>(515, 8, 5, false, stream);
+    if (!small) run<q8>(262144, 8, 1, false, stream);
     CK(cudaStreamDestroy(stream)); std::puts("PASS");
 }

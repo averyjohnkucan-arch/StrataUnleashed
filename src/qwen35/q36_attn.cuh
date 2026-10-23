@@ -508,7 +508,8 @@ inline void launch_part_q8x_r(const float* q, const q8_cell* kc, const VC* vc, c
     static bool opted = false;
     if (!opted) {
 #ifndef __HIPCC__
-        cudaFuncSetAttribute(part_q8x<R, TC, S, VC, Rows>, cudaFuncAttributeMaxDynamicSharedMemorySize, (int) smem);
+        if (cudaFuncSetAttribute(part_q8x<R, TC, S, VC, Rows>, cudaFuncAttributeMaxDynamicSharedMemorySize, (int) smem) != cudaSuccess)
+            std::fprintf(stderr, "strata-q36: part_q8x<%d>: %zu bytes of shared memory refused\n", R, smem);
 #endif
         opted = true;
     }
