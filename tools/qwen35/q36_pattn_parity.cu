@@ -168,14 +168,15 @@ int main(int argc, char** argv) {
     CK(cudaMalloc(&dk, hk.size() * sizeof(q8_cell))); CK(cudaMalloc(&dv, hv.size() * sizeof(q8_cell)));
     CK(cudaMemcpy(dk, hk.data(), hk.size() * sizeof(q8_cell), cudaMemcpyHostToDevice));
     CK(cudaMemcpy(dv, hv.data(), hv.size() * sizeof(q8_cell), cudaMemcpyHostToDevice));
-    float *dq, *dof, *dop, *pacc, *pm, *pl;
-    CK(cudaMalloc(&dq, (size_t) Tmax * H * HD * 4)); CK(cudaMalloc(&dof, (size_t) Tmax * H * HD * 4)); CK(cudaMalloc(&dop, (size_t) Tmax * H * HD * 4));
+    float *dq, *dof, *dop, *doi, *pacc, *pm, *pl;
+    CK(cudaMalloc(&dq, (size_t) Tmax * H * HD * 4)); CK(cudaMalloc(&dof, (size_t) Tmax * H * HD * 4)); CK(cudaMalloc(&dop, (size_t) Tmax * H * HD * 4)); CK(cudaMalloc(&doi, (size_t) Tmax * H * HD * 4));
     CK(cudaMalloc(&pacc, q36pattn::partial_acc_floats() * 4)); CK(cudaMalloc(&pm, q36pattn::kPartialRows * 4)); CK(cudaMalloc(&pl, q36pattn::kPartialRows * 4));
     Old old; old.init(CTX, Tmax);
     cudaStream_t st; CK(cudaStreamCreate(&st));
     cudaEvent_t e0, e1; cudaEventCreate(&e0); cudaEventCreate(&e1);
     int fails = 0;
     std::printf("%-30s %7s %8s | %-22s | %-22s | %9s %9s %6s\n", "case", "T", "p0", "fused err (max/rms)", "old err (max/rms)", "fused ms", "old ms", "x");
+    std::printf("%-30s %7s %8s | %-22s | i8 ms    x vs fused\n", "", "", "", "int8-scores err");
     for (const Case& c : cases) {
         if (c.p0 + c.T > CTX) continue;
         std::vector<float> hq((size_t) c.T * H * HD);
@@ -186,8 +187,10 @@ int main(int argc, char** argv) {
         CK(q36pattn::launch(dq, dk, dv, CTX, H, HKV, c.T, c.p0, dof, pacc, pm, pl, n_sm, st));
         CK(cudaStreamSynchronize(st));
         old.run(dq, dk, dv, CTX, c.T, c.p0, dop, st);
+        CK(q36pattn::launch(dq, dk, dv, CTX, H, HKV, c.T, c.p0, doi, pacc, pm, pl, n_sm, st, true));
         CK(cudaStreamSynchronize(st));
-        std::vector<float> gf((size_t) c.T * H * HD), go(gf.size());
+        std::vector<float> gf((size_t) c.T * H * HD), go(gf.size()), gi(gf.size());
+        CK(cudaMemcpy(gi.data(), doi, gi.size() * 4, cudaMemcpyDeviceToHost));
         CK(cudaMemcpy(gf.data(), dof, gf.size() * 4, cudaMemcpyDeviceToHost));
         CK(cudaMemcpy(go.data(), dop, go.size() * 4, cudaMemcpyDeviceToHost));
         // oracle on sampled rows (double, the cells' dequantised values, Q as given in FP32)
@@ -215,14 +218,18 @@ int main(int argc, char** argv) {
             for (auto& x : o) x /= sum;
             ref.push_back(o);
         }
-        const Err ef = compare(gf, ref, rows), eo = compare(go, ref, rows);
+        const Err ef = compare(gf, ref, rows), eo = compare(go, ref, rows), ei = compare(gi, ref, rows);
         // time (3 warm-up, 5 timed)
-        float tf = 0, to = 0;
+        float tf = 0, to = 0, ti = 0;
         for (int r = 0; r < 8; ++r) {
             cudaEventRecord(e0, st);
             q36pattn::launch(dq, dk, dv, CTX, H, HKV, c.T, c.p0, dof, pacc, pm, pl, n_sm, st);
             cudaEventRecord(e1, st); cudaEventSynchronize(e1);
             float ms; cudaEventElapsedTime(&ms, e0, e1); if (r >= 3) tf += ms / 5;
+            cudaEventRecord(e0, st);
+            q36pattn::launch(dq, dk, dv, CTX, H, HKV, c.T, c.p0, doi, pacc, pm, pl, n_sm, st, true);
+            cudaEventRecord(e1, st); cudaEventSynchronize(e1);
+            cudaEventElapsedTime(&ms, e0, e1); if (r >= 3) ti += ms / 5;
             cudaEventRecord(e0, st);
             old.run(dq, dk, dv, CTX, c.T, c.p0, dop, st);
             cudaEventRecord(e1, st); cudaEventSynchronize(e1);
@@ -233,6 +240,7 @@ int main(int argc, char** argv) {
         if (!ok) ++fails;
         std::printf("%-30s %7d %8d | %.2e / %.2e %s | %.2e / %.2e    | %9.3f %9.3f %5.2fx\n", c.what, c.T, c.p0, ef.max_abs, ef.rms,
                     ok ? "ok  " : "FAIL", eo.max_abs, eo.rms, tf, to, to / tf);
+        std::printf("%-30s %7s %8s | %.2e / %.2e      | %9.3f %5.2fx\n", "  int8 scores", "", "", ei.max_abs, ei.rms, ti, tf / ti);
         if (c.kamp != 1.f) { fill_cells(hk, 1.f); CK(cudaMemcpy(dk, hk.data(), hk.size() * sizeof(q8_cell), cudaMemcpyHostToDevice)); }
     }
     std::printf(fails ? "q36_pattn_parity: %d FAILED\n" : "q36_pattn_parity: all ok\n", fails);

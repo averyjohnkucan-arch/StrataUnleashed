@@ -39,6 +39,20 @@ __device__ __forceinline__ void mma16816(float* c, const uint32_t* a, uint32_t b
                  : "r"(a[0]), "r"(a[1]), "r"(a[2]), "r"(a[3]), "r"(b0), "r"(b1));
 #endif
 }
+// S = Q K^T on int8 (--fused-prompt-attn-i8): m16n8k32 s8 x s8 -> s32, four times the FP16 rate on sm_80+ (a zero start each: the
+// caller scales every 32-dim block's integer sums by its Q and K scales)
+__device__ __forceinline__ void mma16832s8(int* c, const uint32_t* a, uint32_t b0, uint32_t b1) {
+#ifdef Q36_PATTN_ARCH
+    asm volatile("mma.sync.aligned.m16n8k32.row.col.s32.s8.s8.s32 {%0,%1,%2,%3}, {%4,%5,%6,%7}, {%8,%9}, {%10,%11,%12,%13};\n"
+                 : "=r"(c[0]), "=r"(c[1]), "=r"(c[2]), "=r"(c[3])
+                 : "r"(a[0]), "r"(a[1]), "r"(a[2]), "r"(a[3]), "r"(b0), "r"(b1), "r"(0), "r"(0), "r"(0), "r"(0));
+#endif
+}
+__device__ __forceinline__ uint32_t pack_s8x4(float4 x, float inv) {
+    const int a = max(-127, min(127, __float2int_rn(x.x * inv))), b = max(-127, min(127, __float2int_rn(x.y * inv)));
+    const int c = max(-127, min(127, __float2int_rn(x.z * inv))), d = max(-127, min(127, __float2int_rn(x.w * inv)));
+    return (uint32_t) (a & 0xff) | ((uint32_t) (b & 0xff) << 8) | ((uint32_t) (c & 0xff) << 16) | ((uint32_t) (d & 0xff) << 24);
+}
 __device__ __forceinline__ void ldsm4(uint32_t* r, const void* p) {
 #ifdef Q36_PATTN_ARCH
     const uint32_t a = (uint32_t) __cvta_generic_to_shared(p);
@@ -73,6 +87,7 @@ __device__ __forceinline__ void put_chunks(__half* tile, int row, int j, uint4 v
 /// Grid (ceil(T / 8), HKV, nsplit), 128 threads. q: [T][H][HD] FP32 (H = HKV * 8). Row (t, h) attends to the cells
 /// [0, p0 + t]. nsplit == 1: out [T][H][HD] FP32 (normalised). else the split's partial (pacc [nsplit][T][H][HD]
 /// unnormalised, pm / pl [nsplit][T][H], base-2 max and sum) for `merge`. `split` = cells per split (a multiple of BC).
+template <bool I8>
 __global__ void __launch_bounds__(kThreads, 2)
 pattn(const float* __restrict__ q, const q8_cell_t* __restrict__ kc, const q8_cell_t* __restrict__ vc, int ctx, int H,
       int T, int p0, int split, int nsplit, float scale_log2, float* __restrict__ out, float* __restrict__ pacc,
@@ -80,13 +95,41 @@ pattn(const float* __restrict__ q, const q8_cell_t* __restrict__ kc, const q8_ce
 #ifdef Q36_PATTN_ARCH
     __shared__ __align__(16) __half Ks[BC * HD];
     __shared__ __align__(16) __half Vs[BC * HD];
+    __shared__ float ksc[I8 ? 8 * BC : 1];   // I8: the K cells' 32-block scales, [block][cell]
     const int tid = threadIdx.x, lane = tid & 31, w = tid >> 5, g = lane >> 2, qd = lane & 3;
     const int tok0 = blockIdx.x * kTok, kvh = blockIdx.y, sp = blockIdx.z;
     const int tA = tok0 + 2 * w, tB = tA + 1, head = kvh * G + g;
     const bool vA = tA < T, vB = tB < T;
     // Q as A fragments (rows g -> token A, g + 8 -> token B; FP16 like the GEMM path's q16)
-    uint32_t qa[16][4];
-    {
+    uint32_t qa[I8 ? 1 : 16][4];
+    uint32_t qi[I8 ? 8 : 1][4];
+    float sq[I8 ? 8 : 1][2];
+    if constexpr (I8) {   // Q as s8 A fragments, one scale per row and 32 dims (the quad's four lanes share a row's block)
+        const float* qA = q + ((size_t) tA * H + head) * HD;
+        const float* qB = q + ((size_t) tB * H + head) * HD;
+#pragma unroll
+        for (int b = 0; b < 8; ++b) {
+            const int d = b * 32 + 4 * qd;
+            const float4 z = make_float4(0.f, 0.f, 0.f, 0.f);
+            const float4 a0 = vA ? *reinterpret_cast<const float4*>(qA + d) : z, a1 = vA ? *reinterpret_cast<const float4*>(qA + d + 16) : z;
+            const float4 b0 = vB ? *reinterpret_cast<const float4*>(qB + d) : z, b1 = vB ? *reinterpret_cast<const float4*>(qB + d + 16) : z;
+            float ma = fmaxf(fmaxf(fmaxf(fabsf(a0.x), fabsf(a0.y)), fmaxf(fabsf(a0.z), fabsf(a0.w))),
+                             fmaxf(fmaxf(fabsf(a1.x), fabsf(a1.y)), fmaxf(fabsf(a1.z), fabsf(a1.w))));
+            float mb = fmaxf(fmaxf(fmaxf(fabsf(b0.x), fabsf(b0.y)), fmaxf(fabsf(b0.z), fabsf(b0.w))),
+                             fmaxf(fmaxf(fabsf(b1.x), fabsf(b1.y)), fmaxf(fabsf(b1.z), fabsf(b1.w))));
+            ma = fmaxf(ma, __shfl_xor_sync(0xffffffffu, ma, 1));
+            ma = fmaxf(ma, __shfl_xor_sync(0xffffffffu, ma, 2));
+            mb = fmaxf(mb, __shfl_xor_sync(0xffffffffu, mb, 1));
+            mb = fmaxf(mb, __shfl_xor_sync(0xffffffffu, mb, 2));
+            const float ia = ma > 0.f ? 127.f / ma : 0.f, ib = mb > 0.f ? 127.f / mb : 0.f;
+            qi[b][0] = pack_s8x4(a0, ia);
+            qi[b][1] = pack_s8x4(b0, ib);
+            qi[b][2] = pack_s8x4(a1, ia);
+            qi[b][3] = pack_s8x4(b1, ib);
+            sq[b][0] = ma * (1.f / 127.f);
+            sq[b][1] = mb * (1.f / 127.f);
+        }
+    } else {
         const float* qA = q + ((size_t) tA * H + head) * HD;
         const float* qB = q + ((size_t) tB * H + head) * HD;
 #pragma unroll
@@ -128,7 +171,12 @@ pattn(const float* __restrict__ q, const q8_cell_t* __restrict__ kc, const q8_ce
                     kd = kbase[cell].d[j >> 1];
                     vd = vbase[cell].d[j >> 1];
                 }
-                put_chunks(Ks, cl, j, kv, kd);
+                if constexpr (I8) {   // K stays int8 (16-byte chunks, swizzled by the row), its scales go to ksc
+                    *reinterpret_cast<uint4*>(reinterpret_cast<uint8_t*>(Ks) + cl * HD + ((j ^ (cl & 7)) * 16)) = kv;
+                    if (i < 2) ksc[(part * 2 + i) * BC + cl] = ok ? kbase[cell].d[part * 2 + i] : 0.f;
+                } else {
+                    put_chunks(Ks, cl, j, kv, kd);
+                }
                 put_chunks(Vs, cl, j, vv, vd);
             }
         }
@@ -136,6 +184,28 @@ pattn(const float* __restrict__ q, const q8_cell_t* __restrict__ kc, const q8_ce
         float s[4][4];
 #pragma unroll
         for (int i = 0; i < 4; ++i) s[i][0] = s[i][1] = s[i][2] = s[i][3] = 0.f;
+        if constexpr (I8) {
+#pragma unroll
+            for (int b = 0; b < 8; ++b) {
+#pragma unroll
+                for (int pr = 0; pr < 2; ++pr) {
+                    const int mm = lane >> 3, cell = pr * 16 + (lane & 7) + ((mm >> 1) << 3), ch = b * 2 + (mm & 1);
+                    uint32_t r[4];
+                    ldsm4(r, reinterpret_cast<const uint8_t*>(Ks) + cell * HD + ((ch ^ (cell & 7)) * 16));
+#pragma unroll
+                    for (int e = 0; e < 2; ++e) {
+                        int acc[4];
+                        mma16832s8(acc, qi[b], r[2 * e], r[2 * e + 1]);
+                        const int nt = 2 * pr + e;
+                        const float2 kc2 = *reinterpret_cast<const float2*>(&ksc[b * BC + nt * 8 + 2 * qd]);
+                        s[nt][0] = fmaf((float) acc[0], sq[b][0] * kc2.x, s[nt][0]);
+                        s[nt][1] = fmaf((float) acc[1], sq[b][0] * kc2.y, s[nt][1]);
+                        s[nt][2] = fmaf((float) acc[2], sq[b][1] * kc2.x, s[nt][2]);
+                        s[nt][3] = fmaf((float) acc[3], sq[b][1] * kc2.y, s[nt][3]);
+                    }
+                }
+            }
+        } else {
 #pragma unroll
         for (int ks = 0; ks < 16; ++ks) {
 #pragma unroll
@@ -146,6 +216,7 @@ pattn(const float* __restrict__ q, const q8_cell_t* __restrict__ kc, const q8_ce
                 mma16816(s[2 * pr], qa[ks], r[0], r[1]);
                 mma16816(s[2 * pr + 1], qa[ks], r[2], r[3]);
             }
+        }
         }
         // scale, causal / split mask, online softmax
         float mx[2] = {-INFINITY, -INFINITY};
@@ -266,7 +337,7 @@ inline bool supported(int major, int n_head, int n_head_kv, int head_dim) {
 /// head). `pacc/pm/pl`: scratch for the splits (partial_acc_floats(), kPartialRows, kPartialRows), may be null when
 /// the grid alone fills the card (then no split is used).
 inline cudaError_t launch(const float* q, const q8_cell_t* kc, const q8_cell_t* vc, int ctx, int H, int HKV, int T, int p0,
-                          float* out, float* pacc, float* pm, float* pl, int n_sm, cudaStream_t st) {
+                          float* out, float* pacc, float* pm, float* pl, int n_sm, cudaStream_t st, bool i8 = false) {
     const int P = p0 + T, ntile = (T + kTok - 1) / kTok, blocks = ntile * HKV;
     int nsplit = (2 * n_sm + blocks - 1) / blocks;
     nsplit = std::max(1, std::min(nsplit, P / 512));
@@ -276,7 +347,10 @@ inline cudaError_t launch(const float* q, const q8_cell_t* kc, const q8_cell_t* 
     split = (split + BC - 1) / BC * BC;
     nsplit = (P + split - 1) / split;
     const float scale_log2 = 1.4426950408889634f / sqrtf((float) HD);
-    pattn<<<dim3(ntile, HKV, nsplit), kThreads, 0, st>>>(q, kc, vc, ctx, H, T, p0, split, nsplit, scale_log2, out, pacc, pm, pl);
+    if (i8)   // S = Q K^T on the int8 tensor cores
+        pattn<true><<<dim3(ntile, HKV, nsplit), kThreads, 0, st>>>(q, kc, vc, ctx, H, T, p0, split, nsplit, scale_log2, out, pacc, pm, pl);
+    else
+        pattn<false><<<dim3(ntile, HKV, nsplit), kThreads, 0, st>>>(q, kc, vc, ctx, H, T, p0, split, nsplit, scale_log2, out, pacc, pm, pl);
     if (nsplit > 1) merge<<<T * H, HD, 0, st>>>(pacc, pm, pl, T * H, nsplit, out);
     return cudaGetLastError();
 }
@@ -290,7 +364,7 @@ constexpr size_t kPartialRows = 16384;
 inline size_t partial_acc_floats() { return 0; }
 inline bool supported(int, int, int, int) { return false; }
 inline cudaError_t launch(const float*, const void*, const void*, int, int, int, int, int, float*, float*, float*, float*, int,
-                          cudaStream_t) {
+                          cudaStream_t, bool = false) {
     return cudaErrorNotSupported;
 }
 }  // namespace q36pattn

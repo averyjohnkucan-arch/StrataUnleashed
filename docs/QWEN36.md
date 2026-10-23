@@ -243,6 +243,16 @@ on the `strata-q36` command line.
   at 0.21 or less); the 4K and 32K prompts have mean 8.3e-3 / 9.7e-3, max 0.048 / 0.063; two more 14K agent prompts: mean 3.0e-3 and
   1.7e-5, max 0.026 and 6.5e-4. For comparison `--prefill 1024` gives mean 8.9e-3, max 0.51 and the accepted prefetch opt-ins mean
   2.2e-2, max 1.95.
+- **`--fused-prompt-attn-i8`** (experimental, implies `--fused-prompt-attn`): the scores S = Q K^T on the int8 tensor cores
+  (`mma.sync` m16n8k32, four times the FP16 rate on an RTX 5080: 488 against 122 TOPS measured): the K cells stay int8 in shared
+  memory, Q is quantised to int8 per row and 32 dims, each 32-dim block's integer sum is scaled by its Q and K scale in FP32
+  before the softmax; P V stays FP16. One layer's attention at 262K cells: 2,048 rows 125 -> 110 ms, 300 rows 20.1 -> 16.8 ms,
+  52 rows 2.67 -> 2.23 ms (1.14-1.2x; 1.25-1.5x at 14K-40K): the scale and convert work after every integer product takes most of the
+  gain. Its error against a double-precision oracle is larger than the FP16 kernel's (6e-5 against 6e-6 at 262K cells, 2.5e-4
+  against 1.9e-5 at 14K, 9.4e-2 against 6.5e-3 on the scores-times-8 case), about the default path's at 262K and above it elsewhere.
+  Fresh prompt read 40K 5,410 -> 5,630 tok/s with `--fused-prompt-attn`, 16K and 4K unchanged; a +2,000-token read on 38K reused
+  tokens 431 -> 400 ms. KL against the default path (195 steps, 14K and 57K corpus + 76K agent prompt): mean 1.55e-2, median
+  1.5e-3, p99 0.097, max 1.59 (the FP16 kernel alone: 2.06e-2 / 1.6e-3 / 0.094 / 2.67).
 - **`--chunked-gdn`** (NVIDIA, any arch): the prompt's gated delta rule in pieces of 16 tokens instead of one token after another
   (`q36_gdn.cuh`). The recurrence `S_t = g_t S_{t-1} + k_t delta_t^T` is unrolled over a piece: a kernel computes every piece's
   triangular system `(I + L) delta = b` matrix `L` and the output matrix `P` (they do not depend on the state), then one block per
