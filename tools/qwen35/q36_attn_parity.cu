@@ -10,6 +10,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <limits>
 #include <type_traits>
 #include <vector>
@@ -154,6 +155,43 @@ template<class KV> void run(int ctx, int group, int tokens, bool sessions, cudaS
             t0, H, KVH, ctx, 1.f / 16, chunks, acc, mx, den, rows);
     CK(cudaGetLastError());
     CK(cudaStreamSynchronize(stream));
+    if constexpr (q8) {
+        if (q8_own) {
+            // part_q8x (the engine's kernel: cache tiles through shared memory, R window rows per block) against part_q8 above:
+            // every partial it writes must have the same bits, for each cap on the rows per block; the last launch stays
+            // in the buffers for the checks below (the default cap)
+            const auto a0 = read(acc, parts * D), m0 = read(mx, parts), l0 = read(den, parts);
+            const int caps[] = {1, 2, 4};
+            for (int ci = 0; ci < 3; ++ci) {
+                CK(cudaMemset(acc, 0xFF, parts * D * sizeof(float)));
+                CK(cudaMemset(mx, 0xFF, parts * sizeof(float))); CK(cudaMemset(den, 0xFF, parts * sizeof(float)));
+                if (k8v4)
+                    q36attn::launch_part_q8x(dq, reinterpret_cast<const KV*>(kp[0]), reinterpret_cast<const q36attn::q4_cell*>(vp[0]),
+                                             dp, t0, nt, H, KVH, ctx, 1.f / 16, chunks, chunks, acc, mx, den, rows, sessions, stream,
+                                             caps[ci]);
+                else
+                    q36attn::launch_part_q8x(dq, reinterpret_cast<const KV*>(kp[0]), reinterpret_cast<const KV*>(vp[0]), dp, t0,
+                                             nt, H, KVH, ctx, 1.f / 16, chunks, chunks, acc, mx, den, rows, sessions, stream,
+                                             caps[ci]);
+                CK(cudaGetLastError());
+                CK(cudaStreamSynchronize(stream));
+                const auto a1 = read(acc, parts * D), m1 = read(mx, parts), l1 = read(den, parts);
+                size_t bad = 0, cmp = 0;
+                for (int r = 0; r < nt; ++r) for (int h = 0; h < H; ++h) {
+                    const int nn = (sessions ? cells[t0 + r] : pos + t0 + r) + 1, nc = (nn + 255) / 256;
+                    for (int c = 0; c < nc; ++c) {
+                        const size_t o = (size_t) (r * H + h) * chunks + c;
+                        bad += std::memcmp(&a0[o * D], &a1[o * D], D * sizeof(float)) != 0;
+                        bad += std::memcmp(&m0[o], &m1[o], sizeof(float)) != 0;
+                        bad += std::memcmp(&l0[o], &l1[o], sizeof(float)) != 0;
+                        ++cmp;
+                    }
+                }
+                std::printf("  part_q8x (rows cap %d) vs part_q8: %zu partials, %zu differ\n", caps[ci], cmp, bad);
+                if (bad) std::exit(1);
+            }
+        }
+    }
     // q36attn::merge on the partials, gate 0 (a factor of 1/2): compared with the oracle below
     float *gate, *merged;
     CK(cudaMalloc(&gate, (size_t) tokens * H * D * sizeof(float))); CK(cudaMemset(gate, 0, (size_t) tokens * H * D * sizeof(float)));

@@ -224,7 +224,11 @@ on the `strata-q36` command line.
 - **`--gqa-attn`**: the grouped-query decode attention (#3641's kernel) for the fp32 and int8 caches: a block per KV head reads
   each cache cell once for all its query heads (the default kernel reads it once per query head). fp32 switches to it from 8,192
   cells, int8 at every cell: with the int8 cache (a Qwen3.6-35B-A3B fine-tune (Q4_K_M), RTX 5080) it decodes at 184 tok/s (the default kernel 179) at 4K and 165
-  (155) at 8K.
+  (155) at 8K. The int8 kernel (`part_q8x`, 8 query heads per KV head) streams the cache through shared memory (`cp.async`, sm_80+;
+  older cards keep the first int8 kernel) and serves all rows of a verify window in one pass over the cache (up to 4 rows a block,
+  one session). Its partials have the same bits as the first int8 kernel's (checked by `q36_attn_parity` and by `cmp` of the logits).
+  One layer's decode step on an RTX 5080, int8 cache, L2 flushed: 4K cells 48 -> 24 us, 32K 95 -> 69, 90K 229 -> 142, 262K
+  554 -> 361 us; a 3-row window at 262K 1,550 -> 925 us. `STRATA_Q36_ATTN_OLD=1` runs the first kernel, `STRATA_Q36_ATTN_ROWS=n` caps the rows a block takes.
 - **`--fused-prompt-attn`** (the int8 cache, NVIDIA sm_80+, 8 query heads of 256 per KV head; refused with a message otherwise): a
   prompt chunk of more than 8 rows runs its attention in one kernel straight from the int8 cells (`q36_pattn.cuh`): a block takes
   one KV head and 8 tokens x 8 query heads, dequantises 32 cells at a time into shared memory, multiplies on the FP16 tensor cores
