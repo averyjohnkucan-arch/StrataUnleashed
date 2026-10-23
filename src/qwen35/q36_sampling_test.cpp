@@ -281,6 +281,17 @@ void shortlist_case() {
     if (bad || cases < 5000) ++g_fail;
 }
 
+/// --draft-ctx's gather copies a Q6_K row (n_in / 256 blocks of 210 bytes) in 16-byte pieces: n_in 2048 (Sage) and 4096 yes, 3072 and 5120 no
+void q6_rows_case() {
+    bool ok = true;
+    for (int n_in : {256, 512, 1024, 2048, 3072, 4096, 5120, 6144, 8192}) {
+        const bool aligned = ((size_t) (n_in / 256) * 210) % 16 == 0;
+        ok = ok && q6_row_copy_ok(n_in) == aligned;
+    }
+    std::printf("  draft-ctx gather: 16-byte copies only for rows that are a multiple of 16 bytes (n_in 3072, 5120: refused): %s\n", ok ? "yes" : "FAIL");
+    if (!ok) ++g_fail;
+}
+
 /// 5a'. the GPU kernels' slicing: a row is usable only when its last (shorter) slice holds K logits
 void shortlist_rows_case() {
     long long bad = 0, n_ok = 0;
@@ -403,6 +414,7 @@ int main() {
     // 5. --sample-gpu's shortlist
     shortlist_case();
     shortlist_rows_case();
+    q6_rows_case();
     shortlist_loop();
 
     std::printf("q36_sampling_test: %s\n", g_fail ? "FAILED" : "passed");

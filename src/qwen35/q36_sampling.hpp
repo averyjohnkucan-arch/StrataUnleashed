@@ -106,6 +106,8 @@ struct Cand {
 constexpr int kCandMax = 160;
 /// the GPU kernels split a row in kCandBlocks slices of at most kCandSlice logits, each holding at least K
 constexpr int kCandBlocks = 32, kCandSlice = 8192;
+/// --draft-ctx gathers rows of the Q6_K output matrix (n_in / 256 blocks of 210 bytes) with 16-byte copies: a multiple of 16 only when n_in % 2048 == 0
+inline bool q6_row_copy_ok(int n_in) { return n_in > 0 && n_in % 2048 == 0; }
 /// a row of n logits is cut in slices of ceil(n / 32); every slice, the last (shorter) one too, must hold K of them
 inline bool cand_rows_ok(size_t n, int K) {
     const size_t S = (n + kCandBlocks - 1) / kCandBlocks;

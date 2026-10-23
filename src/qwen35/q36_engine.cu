@@ -3874,6 +3874,11 @@ struct Engine {
             draft_ext_max = 0;
             return;
         }
+        if (!sampling::q6_row_copy_ok(m->head.n_in)) {   // (k_gather_rows copies 16 bytes at a time)
+            std::fprintf(stderr, "strata-q36: --draft-ctx needs an output matrix with n_in a multiple of 2048 (this one: %d): ignored\n", m->head.n_in);
+            draft_ext_max = 0;
+            return;
+        }
         const size_t rb = (size_t) (m->head.n_in / 256) * 210;
         d_ext_w = dalloc_t<uint8_t>((size_t) draft_ext_max * rb);
         d_ext_ids = dalloc_t<int32_t>((size_t) draft_ext_max);
@@ -5230,6 +5235,7 @@ struct Serve {
                 ssp.kdraft = [&](int d, const int32_t* prev) { return sj.draft_k(d, prev, (size_t) E.draft_cols()); };
             }
         }
+        long long last_refresh = -1000;   // --draft-ctx: the produced count at the last refresh
         bool decided = false;   // nx is a sampled speculative step's pick (the logits on the device are not its row's)
         if (adm) {
             if (smp.needs_logits()) nx = sample_next();
@@ -5265,7 +5271,10 @@ struct Serve {
         for (;;) {
             if (smp.needs_logits() && !decided) nx = sample_next();
             decided = false;
-            if (spec && E.draft_ext_max > 0 && (produced % 32 == 0)) E.draft_refresh(hist);   // (the context's ids, per 32 tokens)
+            if (spec && E.draft_ext_max > 0 && produced - last_refresh >= 32) {   // (the context's ids, every 32 tokens or more)
+                E.draft_refresh(hist);
+                last_refresh = produced;
+            }
             auto emit = [&](int t) {   // false: the answer ends here
                 std::printf("T %d\n", t);
                 std::fflush(stdout);
@@ -5493,7 +5502,7 @@ int strata::qwen35::run(int argc, char** argv) {
                          "       opt-ins (docs/QWEN36.md): [--kv fp32|fp16|int8|k8v4] [--gqa-attn] [--attn-mma] [--fused-prompt-attn[-i8]] [--chunked-gdn] [--mtp-sampled off|match|q]\n"
                          "       [--spec-min-p P] [--snapshots K] [--snapshot-min N] [--snapshot-host] [--async-swaps]\n"
                          "       [--async-after-prompt] [--lend-staging | --no-lend-staging] [--expert-profile F] [--expert-profile-save F]\n"
-                         "       [--expert-prefetch P] [--prefetch-copies 0|1] [--pool-warm K | --no-pool-warm] [--hybrid-zero-copy] [--decode-swaps N] [--sample-gpu] [--random-seed]\n       [--draft-vocab N [--draft-ctx E]]\n");
+                         "       [--expert-prefetch P] [--prefetch-copies 0|1] [--pool-warm K | --no-pool-warm] [--hybrid-zero-copy] [--decode-swaps N] [--sample-gpu] [--random-seed]\n       [--draft-vocab N] [--draft-ctx E]\n");
             return 2;
         }
     }
@@ -5812,10 +5821,12 @@ int strata::qwen35::run(int argc, char** argv) {
         int32_t picks[16];
         int nx = E.greedy();
         std::vector<int32_t> chist = prompt;
+        long long last_refresh = -1000;
         while ((int) gen.size() < n_gen) {
             gen.push_back(nx);
             if ((int) gen.size() >= n_gen) break;
-            if (E.draft_ext_max > 0 && (gen.size() - 1) % 32 == 0) {
+            if (E.draft_ext_max > 0 && (long long) gen.size() - last_refresh >= 32) {
+                last_refresh = (long long) gen.size();
                 chist.insert(chist.end(), gen.begin() + (long) (chist.size() - prompt.size()), gen.end());
                 E.draft_refresh(chist);
             }
