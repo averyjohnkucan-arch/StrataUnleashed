@@ -1421,6 +1421,12 @@ struct ImgKey {
 struct Engine {
     const Model* m = nullptr;
     cudaStream_t st = nullptr;
+    // the side stream of a decode layer's independent matrices (z and the GDN alpha / beta; the attention's k and v): they
+    // read the layer's input like the first matrix and nothing reads them before the mixer, so they run beside it.  Same
+    // kernels on the same inputs, so the bits are the same; STRATA_Q36_NO_SIDE=1 keeps the one stream.
+    cudaStream_t ast = nullptr;
+    cudaEvent_t ev_a0 = nullptr, ev_a1 = nullptr;
+    bool side_on = std::getenv("STRATA_Q36_NO_SIDE") == nullptr;
     int ctx = 32768, tmax = 512;
     bool kv8 = false;   // --kv int8: the K / V cache as q8_0 rows (kv_cell_bytes), else fp32
     bool kv_v4 = false; // --kv k8v4: kv8's K, V as rotated q4_0 (q36attn::q4_cell); the grouped-query kernel always
@@ -1897,6 +1903,16 @@ struct Engine {
         const size_t T = (size_t) tmax, N = (size_t) g.n_embd, Kp = (size_t) m->top_k, FF = (size_t) g.n_ff;
         const size_t C = (size_t) g.ssm_conv_channels;
         CK(cudaStreamCreateWithFlags(&st, cudaStreamNonBlocking));
+#if !defined(STRATA_USE_HIP) && !defined(STRATA_HIP_GFX906) && !defined(__HIPCC__)   // (HIP: the default priority, as mtp.cpp)
+        {   // the side stream at the highest priority: its small kernels start while the first matrix still holds every SM
+            int lo = 0, hi = 0;
+            CK(cudaDeviceGetStreamPriorityRange(&lo, &hi));
+            CK(cudaStreamCreateWithPriority(&ast, cudaStreamNonBlocking, hi));
+        }
+#else
+        CK(cudaStreamCreateWithFlags(&ast, cudaStreamNonBlocking));
+#endif
+        for (cudaEvent_t* ev : {&ev_a0, &ev_a1}) CK(cudaEventCreateWithFlags(ev, cudaEventDisableTiming));
         x = dalloc(T * N); h = dalloc(T * N); y = dalloc(T * N); hmain = dalloc(T * N);
         qkv = dalloc(T * C); hc = dalloc(T * C); z = dalloc(T * g.ssm_value_dim);
         alpha = dalloc(T * g.ssm_v_heads); beta = dalloc(T * g.ssm_v_heads); gdn_y = dalloc(T * g.ssm_value_dim);
@@ -2513,10 +2529,22 @@ struct Engine {
             float* al_b = verify ? v_alpha[li] : alpha;
             float* be_b = verify ? v_beta[li] : beta;
             prep_in(T);
+            const bool side = side_on && !use_graph && T <= kGemmT;   // z and alpha / beta on the side stream, beside qkv
+            if (side) CK(cudaEventRecord(ev_a0, st));
             apply(L.qkv, xq, qkv_b, T);
+            if (side) {
+                CK(cudaStreamWaitEvent(ast, ev_a0, 0));
+                cudaStream_t keep = st;
+                st = ast;
+                k_gdn_ab<<<dim3(rows8(2 * HV), T), kThreads, 0, st>>>(L.alpha, L.beta, h, L.dt, L.ssm_a, al_b, be_b, N, HV);
+                apply(L.zg, xq, z, T);
+                st = keep;
+                CK(cudaEventRecord(ev_a1, ast));
+            }
             prefetch_issue();   // --expert-prefetch: the last layer's prediction's copies, the stream fed first
-            apply(L.zg, xq, z, T);
-            if (T <= kGemmT) {
+            if (!side) apply(L.zg, xq, z, T);
+            if (side) {
+            } else if (T <= kGemmT) {
                 k_gdn_ab<<<dim3(rows8(2 * HV), T), kThreads, 0, st>>>(L.alpha, L.beta, h, L.dt, L.ssm_a, al_b, be_b, N,
                                                                       HV);
             } else {
@@ -2527,6 +2555,7 @@ struct Engine {
             if (rows_mode) {   // batch rows: a slot's rows (one, or a verify window's two) in sequence on its own state
                 k_conv_seq<<<dim3(C / 128, rows_G), 128, 0, st>>>(nullptr, qkv_b, L.conv, hc_b, C, 2 * HK, m->eps, 1,
                                                                   !verify, d_conv_tab + li * n_sess, d_gslot, d_grow0, d_gcnt);
+                if (side) CK(cudaStreamWaitEvent(st, ev_a1, 0));   // z, alpha, beta: first read here
                 k_gdn_seq<<<dim3(HV, rows_G), dim3(128, 4), 0, st>>>(nullptr, hc_b, C, al_b, be_b, z, L.ssm_norm, m->eps,
                                                                      gdn_y, HK, HV, 1, !verify, d_S_tab + li * n_sess,
                                                                      d_gslot, d_grow0, d_gcnt);
@@ -2548,6 +2577,7 @@ struct Engine {
                     }
                     k_gdn_norm<<<dim3(HV, T), 128, 0, st>>>(gdn_y, z, L.ssm_norm, m->eps, gdn_y, HV);
                 } else {   // decode, verify windows and commits: one kernel, so a window's rows are a decode step's rows
+                    if (side) CK(cudaStreamWaitEvent(st, ev_a1, 0));   // z, alpha, beta: first read here
                     k_gdn_seq<<<HV, dim3(128, 4), 0, st>>>(S[li], hc_b, C, al_b, be_b, z, L.ssm_norm, m->eps, gdn_y, HK, HV,
                                                            T, !verify);
                 }
@@ -2555,10 +2585,25 @@ struct Engine {
             mm(L.ssm_out, gdn_y, y, T);
         } else {
             prep_in(T);
+            const bool side = side_on && !use_graph && T <= kGemmT;   // k and v (512 rows each: launch-bound) beside q
+            if (side) CK(cudaEventRecord(ev_a0, st));
             apply(L.wq, xq, qg, T);
+            if (side) {
+                CK(cudaStreamWaitEvent(ast, ev_a0, 0));
+                cudaStream_t keep = st;
+                st = ast;
+                apply(L.wk, xq, kx, T);
+                apply(L.wv, xq, vx, T);
+                st = keep;
+                CK(cudaEventRecord(ev_a1, ast));
+            }
             prefetch_issue();   // --expert-prefetch: the last layer's prediction's copies, the stream fed first
-            apply(L.wk, xq, kx, T);
-            apply(L.wv, xq, vx, T);
+            if (side) {
+                CK(cudaStreamWaitEvent(st, ev_a1, 0));   // k and v: first read by k_attn_prep
+            } else {
+                apply(L.wk, xq, kx, T);
+                apply(L.wv, xq, vx, T);
+            }
             RowSel rs;
             if (rows_mode) {
                 rs.cell = d_rcell;

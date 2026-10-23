@@ -197,6 +197,13 @@ RTX 5080 16 GB, Sage-A1.5 Q4_K_M, 4K prompt, forced text: `k_add_rms_q` 6.9 -> 2
 Decode, CLI in the serving shape (262K context reserved, 78 experts per layer in VRAM, `--mtp 0`, forced text, 256 tokens, two interleaved
 runs each): 4K 193.4 -> 199.9 tok/s (+3.4%), 16K 169.7 -> 173.9 (+2.5%), 40K 182.8 -> 189.9 (+3.9%). Prompt reading is untouched.
 
+**A side stream for the independent matrices of a decode layer.** In the DeltaNet layers the GDN alpha / beta and the z product, in the
+attention layers the k and v products, run on a second, higher-priority stream beside the layer's first matrix (qkv, q) and join before the
+mixer kernel that reads them: the same kernels on the same inputs, so every bit is unchanged (`--dump-full-logits` identical at 4K and 14K, `--mtp 2`
+text identical, `STRATA_Q36_VERIFY=1` 0 mismatches). Not used with decode graphs or prompt chunks. `STRATA_Q36_NO_SIDE=1` keeps one stream.
+RTX 5080 16 GB, Sage-A1.5 Q4_K_M, serving shape, `--mtp 0`, forced text, two interleaved runs each, side stream off -> on: 4K 199.9 -> 202.4 tok/s
+(+1.2%), 16K 173.5 -> 176.0 (+1.4%), 40K 190.1 -> 192.5 (+1.3%).
+
 **Prompt chunk (the default changed).** The MoE prompt kernels read every expert once per chunk, so a bigger chunk feeds them more rows per
 expert: R9700 pp4096 at chunk 512 / 1024 / 2048 / 4096 = 3,453 / 4,786 / 5,766 / 6,223 tok/s. With every expert in VRAM the engine now takes the
 largest of 4096 / 2048 / 1024 that fits beside the experts, the 0.77 GiB reserve and the sessions' caches without giving the packed decode
