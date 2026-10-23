@@ -309,6 +309,7 @@ on the `strata-q36` command line.
   `STRATA_SPEC_MIN_TEMP`; other sampled requests use `match`. With `--draft-vocab N` the drafts come from the first N ids, and the
   penalties apply to the ids the draft row has.
 - **`--snapshot-host`**: the snapshots of `--snapshots K` in pinned host memory (see below).
+- **`--lend-staging`**: the prompt staging buffers (0.97 GiB, idle while decoding) hold 13 more expert slots per layer in decode (see "Lent staging" below).
 - **`--async-swaps`**, **`--async-after-prompt`**: the expert slots' swaps (every 32 decode rows, `--decode-swaps`; and after a prompt read, up to
   2048) copy on a copy stream instead of stopping the engine stream and the host, into the slot of an expert that already left the table;
   the new expert enters the tables only once its copy has landed (checked at the start of the next forward), so no slot is read before its
@@ -337,6 +338,17 @@ on the `strata-q36` command line.
   RTX 5080, Core Ultra 9 285K, DDR5-6800, Sage-A1.5 Q4_K_M, production flags, `--mtp 0`, forced text, 256 tokens (two runs each, +-1%): copies off, K=3: 4K 203.7 / 204.4 tok/s,
   16K 182.1 / 181.1, 40K 189.5 / 188.5, against the production default (copies on, no warm-up) 193.4, 169.7, 183.1 (+5%, +7%, +3%).
   With `--mtp 2` (greedy, free text, 4K / 40K): 250.8 / 251.3 and 218.3 / 218.7 against 243.3 / 235.7 and 210.7 / 201.4 (+5%, +6%). With the copies on, K=2 or 4 changes nothing (193.9 / 169.9 / 183.2).
+
+**Lent staging.** A prompt chunk longer than `--hybrid-rows` streams each layer's experts through two staging buffers of a whole layer each
+(0.97 GiB in all, 2 x 498 MiB), which decode never touches. `--lend-staging` puts 13 more expert slots per layer in that memory while decoding
+(a third slot class after the cache and prefetch slots, numbered from `L.n_reg`; the grouping kernels take a second base pointer). When the
+stream starts, the lent slots go out of the tables (no copy: 0.07 ms), and after the prompt the rebalance fills them again with the experts
+the prompt routed most, the expert profile's order standing in for experts not routed yet (`STRATA_Q36_LEND_PRIOR=0`: counts only). At load, and
+after the warm-up, they take each layer's next experts in the profile's order that are not resident. A lent slot never holds an expert that is
+resident elsewhere. RTX 5080, 262,144 cells, production flags, forced text, 256 tokens, `--mtp 0`, one run each: GPU share 86.4 / 75.5 / 89.3% to
+89.2 / 77.5-78.9 / 91.3% at 4K / 16K / 40K and decode 194.8 / 170.9 / 183.5 to 200.3 / 170.0 and 176.6 / 186.2 tok/s (+2.8% / -0.5% and +3.4% / +1.5%;
+the 16K runs disagree, the sync controls repeat within 0.5%); prompt speed unchanged (5,605 / 5,766 / 4,566 to 5,661 / 5,778 / 4,576 tok/s).
+The refill is 533 copies (0.95 GiB), which the copy stream does while decoding starts. The log's `lent slots:` line counts evictions and fills.
 
 **Slot swaps.** The log's `rebalance:` line says how many calls, swaps and milliseconds the slot swaps took (RTX 5080, DDR5-6800 (this box now; the DDR5-6400 figures above are older runs), production
 flags, 256 forced tokens after a 4K / 16K / 40K prompt): decode 8 calls, 456 / 369 / 227 swaps, 20.8 / 16.7 / 10.8 ms (0.08 / 0.07 /
