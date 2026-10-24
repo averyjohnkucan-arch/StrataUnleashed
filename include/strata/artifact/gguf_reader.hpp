@@ -635,7 +635,7 @@ inline std::string check_architecture_qwen35moe(const GgufFile& g) {
         "qwen35moe.expert_count", "qwen35moe.expert_used_count", "qwen35moe.expert_feed_forward_length",
         "qwen35moe.expert_shared_feed_forward_length", "qwen35moe.ssm.conv_kernel", "qwen35moe.ssm.state_size",
         "qwen35moe.ssm.group_count", "qwen35moe.ssm.time_step_rank", "qwen35moe.ssm.inner_size",
-        "qwen35moe.full_attention_interval", "qwen35moe.nextn_predict_layers",
+        "qwen35moe.full_attention_interval",
     };
     for (const char* k : keys) {
         const MetaValue* v = g.get(k);
@@ -644,7 +644,9 @@ inline std::string check_architecture_qwen35moe(const GgufFile& g) {
     }
     const MetaValue* nl = g.get("qwen35moe.block_count");
     const MetaValue* mtp = g.get("qwen35moe.nextn_predict_layers");
-    if (mtp->u >= nl->u) return "qwen35moe.nextn_predict_layers is not smaller than qwen35moe.block_count";
+    // Plain non-MTP GGUFs omit this optional key; geometry defaults to zero MTP blocks.
+    if (mtp && !mtp->is_num()) return "qwen35moe.nextn_predict_layers is not a number";
+    if (mtp && mtp->u >= nl->u) return "qwen35moe.nextn_predict_layers is not smaller than qwen35moe.block_count";
     if (g.get("qwen35moe.full_attention_interval")->u < 2)
         return "qwen35moe.full_attention_interval must be at least 2 (the GDN / attention pattern)";
     return {};
