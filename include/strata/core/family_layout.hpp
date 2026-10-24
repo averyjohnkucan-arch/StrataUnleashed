@@ -5,7 +5,7 @@
 //
 //   * geometry_from_gguf: fills core::ModelGeometry from "<arch>.*" keys.  For qwen4exp the keys a file does not
 //     carry keep Flash-Next's values (the struct defaults, which every published qwen4exp file matches); for
-//     qwen35moe every key is required (check_architecture_qwen35moe).
+//     qwen35moe geometry keys are required; omitted nextn_predict_layers means no MTP.
 //   * compiled_geometry_mismatch: the first field where a geometry differs from the shapes this engine's kernels
 //     are built for (the expert count and top-k are run-time values and are not compared).
 //   * layer_tensors / global_tensors: the layout tables.  Names are GGUF names (blk.N.<suffix>), shapes are in

@@ -12,6 +12,7 @@
 #include "gguf_fixture.hpp"
 
 #include "strata/core/family_layout.hpp"
+#include "strata/qwen35/mtp_compat.hpp"
 
 #include <chrono>
 #include <cstdio>
@@ -191,6 +192,35 @@ int main(int argc, char** argv) {
     if (argc == 3 && std::string(argv[1]) == "--real") return real_model(argv[2]);
     std::printf("model_family_test\n");
     TempDir d;
+    {
+        Dims plain=kQwen36; plain.block_count=40; plain.nextn=0;
+        const fs::path target=d.path/"mtp-target.gguf", donor=d.path/"mtp-donor.gguf";
+        fixture::write(target,metadata("qwen35moe",plain,8),{});
+        fixture::write(donor,metadata("qwen35moe",kQwen36,8),{});
+        std::string error;
+        check(strata::qwen35::external_mtp_compatible(strata::GgufFile(target.string()),strata::GgufFile(donor.string()),error),"External MTP accepts the same architecture, trunk and tokenizer");
+        Dims wrong=kQwen36; wrong.embd=4096;
+        fixture::write(d.path/"wrong-mtp.gguf",metadata("qwen35moe",wrong,8),{});
+        check(!strata::qwen35::external_mtp_compatible(strata::GgufFile(target.string()),strata::GgufFile((d.path/"wrong-mtp.gguf").string()),error),"External MTP rejects a different hidden geometry");
+        fixture::write(d.path/"wrong-vocab.gguf",metadata("qwen35moe",kQwen36,9),{});
+        check(!strata::qwen35::external_mtp_compatible(strata::GgufFile(target.string()),strata::GgufFile((d.path/"wrong-vocab.gguf").string()),error),"External MTP rejects a different tokenizer vocabulary");
+        check(!strata::qwen35::external_mtp_compatible(strata::GgufFile(donor.string()),strata::GgufFile(donor.string()),error),"External MTP cannot replace an already embedded draft");
+    }
+    {
+        Dims plain = kQwen36; plain.block_count = 40; plain.nextn = 0;
+        auto kv = metadata("qwen35moe", plain, 8);
+        for (auto it = kv.begin(); it != kv.end(); ++it) {
+            if (it->key == "qwen35moe.nextn_predict_layers") { kv.erase(it); break; }
+        }
+        const fs::path file = d.path / "q36-no-mtp.gguf";
+        fixture::write(file, kv, {});
+        strata::GgufFile model(file.string()); strata::core::ModelGeometry geometry; int64_t top_k = 0; std::string err;
+        check(strata::check_architecture_qwen35moe(model).empty(), "Qwen3.6 without MTP metadata passes the family guard");
+        check(strata::core::geometry_from_gguf(model, geometry, top_k, err) && geometry.n_layers == 40 && geometry.n_mtp_layers == 0, "No-MTP file keeps all 40 trunk layers and invents no draft block");
+        kv.push_back(fixture::str("qwen35moe.nextn_predict_layers", "invalid"));
+        fixture::write(d.path / "q36-invalid-mtp.gguf", kv, {});
+        check(!strata::check_architecture_qwen35moe(strata::GgufFile((d.path / "q36-invalid-mtp.gguf").string())).empty(), "Malformed optional MTP metadata is rejected");
+    }
     {
         // the guards
         const fs::path q36 = d.path / "q36.gguf", fn = d.path / "fn.gguf", other = d.path / "other.gguf";
